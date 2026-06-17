@@ -9,6 +9,8 @@ pidfile="/run/${RC_SVCNAME}.pid"
 output_log="/var/log/sing-box-gateway/sing-box.log"
 error_log="/var/log/sing-box-gateway/sing-box.log"
 retry="TERM/10/KILL/5"
+# OpenRC 没有 systemd 的 LimitNOFILE；这里等价提高 sing-box 进程文件描述符上限，避免高并发连接先撞到默认 ulimit。
+rc_ulimit="${SING_BOX_RC_ULIMIT:--n 1048576}"
 
 depend() {
   need net
