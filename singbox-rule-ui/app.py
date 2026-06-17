@@ -1680,14 +1680,16 @@ def cron_block_lines(begin, end):
 
 def parse_rule_update_schedule():
     cron_line = next((line.strip() for line in cron_block_lines(RULE_UPDATE_CRON_BEGIN, RULE_UPDATE_CRON_END) if line.strip() and not line.strip().startswith("#")), "")
-    match = re.match(r"^(\d{1,2})\s+(\d{1,2})\s+\*\s+\*\s+(\*|0|7)\s+", cron_line)
+    match = re.match(r"^(\d{1,2})\s+(\d{1,2})\s+\*\s+\*\s+(\*|[0-7])\s+", cron_line)
     minute = int(match.group(1)) if match else 20
     hour = int(match.group(2)) if match else 4
-    frequency = "daily" if match and match.group(3) == "*" else "weekly"
+    day_of_week = match.group(3) if match else "0"
+    frequency = "daily" if match and day_of_week == "*" else "weekly"
     return {
         "frequency": frequency,
         "hour": hour,
         "minute": minute,
+        "dayOfWeek": day_of_week,
         "randomizedDelayHours": 0,
         "persistent": False,
         "nextBase": "",
@@ -1708,10 +1710,12 @@ def next_rule_update_time(schedule):
         if candidate <= now:
             candidate += 24 * 60 * 60
     else:
-        # cron 的 0/7 是周日；Python tm_wday 里周一是 0、周日是 6。
-        days_until_sunday = (6 - current.tm_wday) % 7
+        # cron 的 0/7 是周日；Python tm_wday 里周一是 0、周日是 6。手动更新后会把 dayOfWeek 改成当日，实现从本次更新时间顺延一周。
+        cron_dow = str(schedule.get("dayOfWeek", "0"))
+        target_dow = 6 if cron_dow in {"0", "7"} else max(0, min(6, int(cron_dow) - 1))
+        days_until_target = (target_dow - current.tm_wday) % 7
         candidate = time.mktime((current.tm_year, current.tm_mon, current.tm_mday, hour, minute, 0, current.tm_wday, current.tm_yday, current.tm_isdst))
-        candidate += days_until_sunday * 24 * 60 * 60
+        candidate += days_until_target * 24 * 60 * 60
         if candidate <= now:
             candidate += 7 * 24 * 60 * 60
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(candidate))
@@ -1738,7 +1742,8 @@ def normalize_rule_update_schedule(payload):
 
 def write_rule_update_schedule(payload):
     schedule = normalize_rule_update_schedule(payload)
-    dow = "0" if schedule["frequency"] == "weekly" else "*"
+    requested_dow = str(payload.get("dayOfWeek", "0"))
+    dow = requested_dow if schedule["frequency"] == "weekly" and requested_dow in {"0", "1", "2", "3", "4", "5", "6", "7"} else "*"
     cron_line = (
         f"{schedule['minute']} {schedule['hour']} * * {dow} "
         "/usr/local/sbin/update-sing-box-rules-jsdelivr >> /var/log/sing-box-gateway/rule-update.log 2>&1"
@@ -1762,6 +1767,22 @@ def write_rule_update_schedule(payload):
     # Alpine 用 crond 代替 systemd timer；写入后重启 crond，避免 UI 显示和实际触发不一致。
     restart = run_command(rc_service_args("crond", "restart"), timeout=20)
     return {"ok": restart["code"] == 0, "schedule": schedule, "daemonReload": {"code": 0, "stdout": "", "stderr": ""}, "restart": restart}
+
+
+def reschedule_rule_update_cron_after_manual_success():
+    schedule = parse_rule_update_schedule()
+    now = time.localtime()
+    payload = {
+        "frequency": schedule.get("frequency", "weekly"),
+        "hour": now.tm_hour,
+        "minute": now.tm_min,
+        # cron 周日是 0，周一到周六是 1-6；手动成功后把 weekly 基准改成今天，等价于从本次更新顺延一个周期。
+        "dayOfWeek": "0" if now.tm_wday == 6 else str(now.tm_wday + 1),
+        "randomizedDelayHours": schedule.get("randomizedDelayHours", 0),
+    }
+    if payload["frequency"] == "daily":
+        payload["dayOfWeek"] = "*"
+    return write_rule_update_schedule(payload)
 
 
 def default_lan_ip():
@@ -2553,6 +2574,7 @@ def update_rule_sets():
         }
     text = "\n".join(item for item in (result.get("stdout"), result.get("stderr")) if item)
     result["summary"] = rule_update_summary(text)
+    result["cronReschedule"] = reschedule_rule_update_cron_after_manual_success() if result["code"] == 0 else None
     write_json(
         RULE_UPDATE_LAST_PATH,
         {
@@ -2562,6 +2584,7 @@ def update_rule_sets():
             "code": result["code"],
             "log": text,
             "summary": result["summary"],
+            "cronReschedule": result["cronReschedule"],
         },
     )
     return result

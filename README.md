@@ -117,7 +117,7 @@ OpenRC 服务日志默认写入：
 - 每周日 04:20 更新分流规则
 - 每 2 分钟运行 `/usr/local/sbin/monitor-sing-box-runtime`
 
-Rule UI 的维护页可以调整分流规则自动更新周期和执行时间。保存后 UI 会更新 `/etc/crontabs/root` 中由本项目标记包围的规则更新块，并重启 `crond`。这只改变触发计划，不改变 `/usr/local/sbin/update-sing-box-rules-jsdelivr` 更新脚本，也不会修改 sing-box 主配置。
+Rule UI 的维护页可以调整分流规则自动更新周期和执行时间。保存后 UI 会更新 `/etc/crontabs/root` 中由本项目标记包围的规则更新块，并重启 `crond`。手动“立即更新分流规则”成功后，也会把下一次自动更新从本次完成时间重新顺延一个周期。这些动作只改变触发计划，不改变 `/usr/local/sbin/update-sing-box-rules-jsdelivr` 更新脚本，也不会修改 sing-box 主配置。
 
 ## IPv6 RA
 
