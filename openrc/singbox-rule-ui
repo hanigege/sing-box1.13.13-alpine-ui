@@ -14,7 +14,9 @@ export RULE_UI_HOST="${RULE_UI_HOST:-0.0.0.0}"
 export RULE_UI_PORT="${RULE_UI_PORT:-9091}"
 
 depend() {
-  need net sing-box
+  need net
+  use sing-box
+  after sing-box
 }
 
 start_pre() {

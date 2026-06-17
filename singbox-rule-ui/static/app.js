@@ -1656,7 +1656,7 @@ async function importBackupFromFile(event) {
     });
     state = result.state;
     maintenance = result.maintenance || maintenance;
-    // 导入成功后以后端刚重启并测速得到的运行态为准，避免旧缓存或空 history 把节点显示成未检测。
+    // 导入成功后运行态由后端后台重启应用；先清掉旧缓存，再延迟刷新，避免当前 fetch 被 OpenRC 重启链路打断。
     runtimeProxy = { now: null, available: false };
     delays = {};
     applyProxyPayload(result);
@@ -1670,7 +1670,11 @@ async function importBackupFromFile(event) {
     finishActionButton("importBackupBtn", "actionDone", "done", "importBackup");
     setStatus(t("backupImported"), "ok");
     window.alert(t("backupImportedAlert"));
-    if (!result.delays) loadProxyInfo(false).then(() => render()).catch(() => {});
+    if (result.applyScheduled) {
+      setTimeout(() => {
+        Promise.all([refreshMaintenance(), loadProxyInfo(false)]).then(() => render()).catch(() => {});
+      }, 2500);
+    } else if (!result.delays) loadProxyInfo(false).then(() => render()).catch(() => {});
   } catch (error) {
     finishActionButton("importBackupBtn", "actionFailed", "failed", "importBackup");
     setStatus(error.message || t("backupImportFailed"), "bad");

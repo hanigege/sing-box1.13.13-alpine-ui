@@ -1606,6 +1606,26 @@ def restart_rule_ui_later(delay=1.0):
     threading.Thread(target=target, daemon=True).start()
 
 
+def apply_import_runtime_later(nodes, groups, normalized_lists, saved_result, delay=0.3):
+    def target():
+        time.sleep(delay)
+        try:
+            # 导入接口必须先把 HTTP 响应发回浏览器；运行态重启放后台，避免 fetch 被 OpenRC 重启链路打断。
+            restart = restart_sing_box()
+            if restart["code"] != 0 or service_status() != "active":
+                # 后台应用失败时仍保留导入前的回滚语义，避免留下无法启动的新配置。
+                rollback_apply(saved_result)
+                restart_sing_box()
+                print(f"backup import runtime apply rolled back after restart failure: {restart}")
+                return
+            sync_tproxy(nodes=nodes, groups=groups, normalized_lists=normalized_lists)
+            current_proxy_payload_after_probe(test_delays=True)
+        except Exception as exc:
+            print(f"backup import runtime apply failed: {exc}")
+
+    threading.Thread(target=target, daemon=True).start()
+
+
 def read_crontab_text():
     try:
         return ROOT_CRONTAB.read_text(encoding="utf-8")
@@ -2964,33 +2984,18 @@ def import_backup_payload(payload):
             "tproxySync": None,
         }
     result = apply_all(normalized_lists, nodes, groups)
-    restart = restart_sing_box()
-    rollback = None
-    if restart["code"] != 0 or service_status() != "active":
-        rollback_apply(result)
-        rollback_restart = restart_sing_box()
-        rollback = {"restart": rollback_restart, "service": service_status()}
-        return {
-            "ok": False,
-            "error": "Restart failed. Previous config was restored.",
-            "check": check,
-            "saved": result,
-            "restart": restart,
-            "rollback": rollback,
-            "tproxySync": None,
-        }
-    tproxy_sync = sync_tproxy(nodes=nodes, groups=groups, normalized_lists=normalized_lists)
-    # 备份导入会重建节点和重启 sing-box，旧 history 不能代表新运行态；成功后立即测速并重新读取 Auto.now。
-    proxy_payload = current_proxy_payload_after_probe(test_delays=True)
+    apply_import_runtime_later(nodes, groups, normalized_lists, result)
     return {
         "ok": True,
         "error": "",
         "check": check,
         "saved": result,
-        "restart": restart,
-        "rollback": rollback,
-        "tproxySync": tproxy_sync,
-        **proxy_payload,
+        "restart": {"code": 0, "stdout": "", "stderr": "", "scheduled": True, "service": "sing-box"},
+        "rollback": None,
+        "tproxySync": {"code": 0, "stdout": "", "stderr": "", "scheduled": True, "service": TPROXY_SERVICE},
+        "applyScheduled": True,
+        "maintenance": maintenance_status(),
+        "state": load_state(),
     }
 
 
