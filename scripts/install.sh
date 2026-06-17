@@ -215,7 +215,31 @@ bootstrap_config() {
 }
 
 install_initial_rules() {
-  RULE_UPDATE_RESTART=0 /usr/local/sbin/update-sing-box-rules-jsdelivr
+  RULE_UPDATE_RESTART=0 RULE_UPDATE_LOCK_WAIT="${RULE_UPDATE_LOCK_WAIT:-300}" /usr/local/sbin/update-sing-box-rules-jsdelivr
+  verify_required_rules
+}
+
+verify_required_rules() {
+  local missing=0 path
+  for path in \
+    /etc/sing-box/rules/geosite/speedtest.srs \
+    /etc/sing-box/rules/geosite/telegram.srs \
+    /etc/sing-box/rules/geosite/geolocation-!cn.srs \
+    /etc/sing-box/rules/geosite/cn.srs \
+    /etc/sing-box/rules/geosite/icloud@cn.srs \
+    /etc/sing-box/rules/geosite/apple@cn.srs \
+    /etc/sing-box/rules/geosite/geolocation-cn.srs \
+    /etc/sing-box/rules/geoip/cn.srs \
+    /etc/sing-box/rules/geoip/telegram.srs; do
+    if [ ! -s "$path" ]; then
+      echo "Missing required rule file: $path" >&2
+      missing=1
+    fi
+  done
+  if [ "$missing" -ne 0 ]; then
+    echo "Required sing-box rule files are missing; installation stopped before enabling services." >&2
+    exit 1
+  fi
 }
 
 port53_conflicts() {
@@ -324,7 +348,8 @@ ensure_dns_port_available() {
     return
   fi
   echo "53 端口仍被占用: $owner" >&2
-  echo "Alpine 迁移版不会改写 /etc/resolv.conf，也不会替你关闭其它 DNS 服务；请先释放 53 端口再安装。" >&2
+  echo "Alpine 迁移版不会改写 /etc/resolv.conf，也不会自动停止第三方 DNS 服务。" >&2
+  echo "请先用 rc-service/rc-update 禁用占用 53 的服务，或调整它的监听端口；否则重启后仍会再次抢占 53。" >&2
   exit 1
 }
 

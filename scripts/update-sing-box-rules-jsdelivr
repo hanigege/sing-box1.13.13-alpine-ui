@@ -10,11 +10,20 @@ SERVICE="${RULE_UPDATE_SERVICE_NAME:-sing-box}"
 TPROXY_SERVICE="${RULE_UPDATE_TPROXY_SERVICE:-sing-box-tproxy}"
 RESTART_SERVICE="${RULE_UPDATE_RESTART:-1}"
 FORCE_UPDATE="${RULE_UPDATE_FORCE:-0}"
+LOCK_WAIT="${RULE_UPDATE_LOCK_WAIT:-0}"
 LOCK_FILE="/run/update-sing-box-rules-jsdelivr.lock"
 exec 9>"$LOCK_FILE"
-if ! flock -n 9; then
-  echo "another rule update is already running; exiting"
-  exit 0
+if [ "$LOCK_WAIT" = "0" ]; then
+  if ! flock -n 9; then
+    echo "another rule update is already running; exiting"
+    exit 0
+  fi
+else
+  # 安装阶段必须等已有规则更新结束；否则初装规则缺失会在 sing-box check 才暴露成难懂错误。
+  if ! flock -w "$LOCK_WAIT" 9; then
+    echo "ERROR: another rule update is still running after ${LOCK_WAIT}s" >&2
+    exit 1
+  fi
 fi
 
 TMP_DIR="$(mktemp -d)"
