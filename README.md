@@ -72,6 +72,8 @@ Alpine 默认通常没有 `systemd-resolved` 占用 53 端口。本仓库按 Alp
 - 安装器不会替你关闭其它 DNS 服务
 - 安装器不会把宿主机 DNS 指向 sing-box 本机
 
+如果占用者是 `dnsmasq`、`unbound`、`adguardhome` 或其它第三方 DNS，安装器不会自动 kill 或临时 stop。临时停掉不能解决重启后再次抢占 53 的问题，还可能断开当前管理网络。更稳的处理方式是用 `rc-service <服务> stop` 和 `rc-update del <服务> default` 持久禁用，或者把该服务改到其它监听端口后再安装。
+
 客户端 DNS 只有最终进入 sing-box，白名单、黑名单、灰名单、FakeIP 和域名分流规则才会完整生效。实现方式可以是：
 
 - 在客户端手动把 DNS 指向 sing-box 机器的内网 IPv4
