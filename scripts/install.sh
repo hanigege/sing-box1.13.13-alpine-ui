@@ -79,8 +79,18 @@ record_preinstall_state() {
 }
 
 install_packages() {
-  apk update
-  apk add --no-cache "${APK_PACKAGES[@]}"
+  local missing=() package
+  for package in "${APK_PACKAGES[@]}"; do
+    if ! apk info -e "$package" >/dev/null 2>&1; then
+      missing+=("$package")
+    fi
+  done
+  if [ "${#missing[@]}" -eq 0 ]; then
+    echo "Alpine dependencies already installed."
+    return
+  fi
+  # 覆盖安装不能因为外部 APK 索引临时 TLS/网络失败而中断；只在确有缺失依赖时联网安装。
+  apk add --no-cache "${missing[@]}"
 }
 
 enable_radvd_requested() {
