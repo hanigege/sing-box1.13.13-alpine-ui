@@ -78,6 +78,13 @@ record_preinstall_state() {
     # Alpine 默认没有 systemd-resolved stub；这里仅记录 53 端口现场，卸载不擅自改 DNS。
     state_set port53_owners "$(port53_owners 2>/dev/null || true)"
   fi
+  if [ "$(state_get sysctl_boot)" = "" ]; then
+    if service_enabled_in_runlevel sysctl boot; then
+      state_set sysctl_boot preexisting
+    else
+      state_set sysctl_boot absent
+    fi
+  fi
 }
 
 install_packages() {
@@ -109,6 +116,11 @@ service_exists() {
 service_enabled() {
   local service="$1"
   rc-update show default 2>/dev/null | awk '{ print $1 }' | grep -qx "$service"
+}
+
+service_enabled_in_runlevel() {
+  local service="$1" runlevel="$2"
+  rc-update show "$runlevel" 2>/dev/null | awk '{ print $1 }' | grep -qx "$service"
 }
 
 disable_unrequested_radvd() {
@@ -400,6 +412,8 @@ install_performance_sysctl() {
     sed -i '/^net\.ipv4\.tcp_congestion_control = bbr$/s/^/# /' "$PERFORMANCE_SYSCTL"
     sysctl -p "$PERFORMANCE_SYSCTL"
   fi
+  # 性能参数属于内核运行态，重启后交给 OpenRC sysctl 在 boot 阶段统一加载；不放进运行态监控里反复纠偏。
+  rc-update add sysctl boot >/dev/null 2>&1 || true
 }
 
 update_crontab_block() {
