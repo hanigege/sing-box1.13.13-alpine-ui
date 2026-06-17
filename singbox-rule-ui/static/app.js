@@ -81,6 +81,7 @@ const translations = {
     runtimeViewRules: "Rules",
     noRuntimeRows: "No runtime data",
     waitingRuntimeLogs: "Waiting for logs",
+    idleRuntimeLogs: "No new log lines yet. Current log level may only emit warnings or errors.",
     startLogs: "Start logs",
     stopLogs: "Stop logs",
     logsStreaming: "Streaming logs",
@@ -341,6 +342,7 @@ const translations = {
     runtimeViewRules: "规则",
     noRuntimeRows: "暂无运行数据",
     waitingRuntimeLogs: "正在接收日志",
+    idleRuntimeLogs: "暂无新日志；当前日志级别可能只输出 warning/error。",
     startLogs: "开始日志",
     stopLogs: "停止日志",
     logsStreaming: "正在接收日志",
@@ -525,7 +527,7 @@ let token = localStorage.getItem("ruleUiToken") || "";
 let lang = localStorage.getItem("ruleUiLang") || ((navigator.language || "").toLowerCase().startsWith("zh") ? "zh" : "en");
 let state = { lists: { whitelist: [], blacklist: [], greylist: [], ddns: [] }, nodes: [], groups: {}, meta: {} };
 let maintenance = {};
-let runtime = { connections: [], rules: [], logLevel: "warn", logLines: [] };
+let runtime = { connections: [], rules: [], logLevel: "warn", logLines: [], logIdle: false };
 let runtimeProxy = { now: null, available: false };
 let delays = {};
 let dnsDelays = {};
@@ -681,7 +683,7 @@ function logout() {
   localStorage.removeItem("ruleUiToken");
   state = { lists: { whitelist: [], blacklist: [], greylist: [], ddns: [] }, nodes: [], groups: {}, meta: {} };
   maintenance = {};
-  runtime = { connections: [], rules: [], logLevel: "warn", logLines: [] };
+  runtime = { connections: [], rules: [], logLevel: "warn", logLines: [], logIdle: false };
   stopRuntimeLogs(false);
   stopRuntimePolling();
   runtimeProxy = { now: null, available: false };
@@ -1297,7 +1299,7 @@ function renderRuntimeRules(rows) {
 }
 
 function renderRuntimeLogs() {
-  if (!runtime.logLines.length) return renderRuntimeEmpty(logStreamController ? t("waitingRuntimeLogs") : t("noRuntimeRows"));
+  if (!runtime.logLines.length) return renderRuntimeEmpty(logStreamController ? (runtime.logIdle ? t("idleRuntimeLogs") : t("waitingRuntimeLogs")) : t("noRuntimeRows"));
   const list = document.createElement("div");
   list.className = "runtime-log-list";
   runtime.logLines.forEach((raw, index) => {
@@ -1312,6 +1314,9 @@ function renderRuntimeLogs() {
       if (match) {
         level = match[1];
         payload = match[2];
+      } else {
+        const plainLevel = raw.match(/\b(ERROR|WARN|WARNING|INFO|DEBUG|TRACE|FATAL|PANIC)\b/i);
+        if (plainLevel) level = plainLevel[1].toLowerCase();
       }
     }
     const row = document.createElement("div");
@@ -1410,10 +1415,17 @@ function stopRuntimeLogs(updateStatus = true) {
 async function startRuntimeLogs() {
   stopRuntimeLogs(false);
   runtime.logLines = [];
+  runtime.logIdle = false;
   const controller = new AbortController();
   logStreamController = controller;
   render();
   setStatus(t("logsStreaming"), "ok");
+  const idleTimer = setTimeout(() => {
+    if (logStreamController === controller && !runtime.logLines.length) {
+      runtime.logIdle = true;
+      if (active === "runtime" && $("runtimeView").value === "logs") renderRuntime();
+    }
+  }, 6000);
   try {
     const headers = {};
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -1427,11 +1439,13 @@ async function startRuntimeLogs() {
       const text = decoder.decode(value, { stream: true });
       runtime.logLines.push(...text.split(/\r?\n/).filter(Boolean));
       runtime.logLines = runtime.logLines.slice(-300);
+      runtime.logIdle = false;
       if (active === "runtime" && $("runtimeView").value === "logs") renderRuntime();
     }
   } catch (error) {
     if (error.name !== "AbortError") setStatus(error.message, "bad");
   } finally {
+    clearTimeout(idleTimer);
     if (logStreamController === controller) logStreamController = null;
     if (active === "runtime") renderRuntime();
   }

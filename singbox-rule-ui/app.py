@@ -32,6 +32,7 @@ BACKUP_DIR = MANAGER_DIR / "backups"
 RULE_UPDATE_LAST_PATH = MANAGER_DIR / "rule-update-last.json"
 TELEGRAM_CIDR_PATH = MANAGER_DIR / "telegram-cidr.json"
 RULE_UPDATE_SCRIPT = Path(os.environ.get("RULE_UI_RULE_UPDATE_SCRIPT", "/usr/local/sbin/update-sing-box-rules-jsdelivr"))
+SING_BOX_LOG_PATH = Path(os.environ.get("RULE_UI_SING_BOX_LOG", "/var/log/sing-box-gateway/sing-box.log"))
 ROOT_CRONTAB = Path(os.environ.get("RULE_UI_ROOT_CRONTAB", "/etc/crontabs/root"))
 RULE_UPDATE_CRON_BEGIN = "# BEGIN sing-box-gateway-ui rule update"
 RULE_UPDATE_CRON_END = "# END sing-box-gateway-ui rule update"
@@ -1752,6 +1753,16 @@ def recent_unit_logs(unit, lines=80):
     return parts[-1] if parts else text
 
 
+def recent_sing_box_logs(lines=80):
+    try:
+        raw_lines = SING_BOX_LOG_PATH.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:]
+    except FileNotFoundError:
+        return []
+    # OpenRC 日志保留 sing-box 的 ANSI 颜色码；运行状态页展示前清理，避免浏览器里出现转义字符。
+    ansi = re.compile(r"\x1b\[[0-9;]*m")
+    return [ansi.sub("", line).strip() for line in raw_lines if line.strip()]
+
+
 def rule_update_summary(text):
     summary = {"updated": [], "kept": [], "skipped": [], "errors": [], "final": "", "status": "", "requiredOk": False}
     for raw in (text or "").splitlines():
@@ -3151,6 +3162,28 @@ class Handler(BaseHTTPRequestHandler):
         headers = {}
         if api_secret:
             headers["Authorization"] = f"Bearer {api_secret}"
+        if path.startswith("/logs?"):
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.end_headers()
+            # 实时日志上游可能在没有新事件时阻塞；先回显近期文件日志，保证运行状态页首屏不是空白。
+            for line in recent_sing_box_logs():
+                self.wfile.write((line + "\n").encode("utf-8"))
+            self.wfile.flush()
+            request = Request(f"{api_url}{path}", headers=headers)
+            try:
+                with urlopen(request, timeout=timeout) as response:
+                    while True:
+                        chunk = response.read(4096)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            except (HTTPError, URLError, TimeoutError, OSError):
+                return
+            return
         # 9091 已经完成 Rule UI token 鉴权；这里仅用后端读取到的 Clash secret 访问白名单接口，不能把 secret 暴露给浏览器。
         request = Request(f"{api_url}{path}", headers=headers)
         try:
