@@ -16,7 +16,7 @@ RULE_UPDATE_CRON_MARKER_BEGIN="# BEGIN sing-box-gateway-ui rule update"
 RULE_UPDATE_CRON_MARKER_END="# END sing-box-gateway-ui rule update"
 MONITOR_CRON_MARKER_BEGIN="# BEGIN sing-box-gateway-ui runtime monitor"
 MONITOR_CRON_MARKER_END="# END sing-box-gateway-ui runtime monitor"
-APK_PACKAGES=(bash curl ca-certificates tar gzip python3 nftables iproute2 rsync util-linux coreutils openrc gcompat)
+APK_PACKAGES=(bash curl ca-certificates tar gzip python3 nftables iproute2 rsync util-linux coreutils openrc)
 
 need_root() {
   if [ "$(id -u)" -ne 0 ]; then

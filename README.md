@@ -9,7 +9,7 @@
 ## 功能
 
 - 一键安装 `sing-box` 二进制、OpenRC 服务、TProxy、crond 定时任务和 Web UI
-- 默认使用仓库内置并校验过的 `sing-box 1.13.13`，包含 `amd64` 和 `arm64`
+- 默认使用仓库内置并校验过的 Alpine/musl 静态构建版 `sing-box 1.13.13`，包含 `amd64` 和 `arm64`
 - 9091 规则 UI 管理白名单、黑名单、灰名单、DDNS、代理节点、实时连接、日志和运行规则
 - 保存前执行 `sing-box check`，失败不覆盖正式配置；规则和主配置使用原子替换
 - 重启失败自动回滚上一份可用配置，优先保证正在运行的 `sing-box` 可恢复
@@ -52,7 +52,7 @@ curl -fsSL https://github.com/hanigege/sing-box1.13.13-alpine-ui/raw/refs/heads/
 wget -O- https://github.com/hanigege/sing-box1.13.13-alpine-ui/raw/refs/heads/main/scripts/quick-install.sh | sh
 ```
 
-安装器会自动安装 Alpine 依赖：`bash`、`curl`、`ca-certificates`、`tar`、`gzip`、`python3`、`nftables`、`iproute2`、`rsync`、`util-linux`、`coreutils`、`openrc`、`gcompat`。`gcompat` 用来运行仓库内置的 glibc Linux 版 sing-box 二进制。卸载时默认保留 apk 包，避免连带移除系统基础依赖。
+安装器会自动安装 Alpine 依赖：`bash`、`curl`、`ca-certificates`、`tar`、`gzip`、`python3`、`nftables`、`iproute2`、`rsync`、`util-linux`、`coreutils`、`openrc`。仓库内置的 `sing-box` 是从官方 `v1.13.13` 标签构建的 Alpine/musl 静态二进制，不需要 `gcompat`。卸载时默认保留 apk 包，避免连带移除系统基础依赖。
 
 如需指定架构：
 
