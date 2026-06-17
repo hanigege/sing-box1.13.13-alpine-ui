@@ -1,0 +1,23 @@
+#!/sbin/openrc-run
+
+name="sing-box"
+description="sing-box gateway service"
+command="/usr/local/bin/sing-box"
+command_args="run -c /etc/sing-box/config.json"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/var/log/sing-box-gateway/sing-box.log"
+error_log="/var/log/sing-box-gateway/sing-box.log"
+retry="TERM/10/KILL/5"
+
+depend() {
+  need net sing-box-tproxy
+  after firewall
+}
+
+start_pre() {
+  checkpath -d -m 0755 /var/log/sing-box-gateway
+  # Alpine/OpenRC 没有 systemd ExecStartPre；启动前刷新运行配置，避免 IP/网卡变化后沿用旧监听地址。
+  /usr/local/sbin/refresh-sing-box-runtime-config || return 1
+  /usr/local/bin/sing-box check -c /etc/sing-box/config.json || return 1
+}
