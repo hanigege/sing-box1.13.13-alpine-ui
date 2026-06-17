@@ -2672,12 +2672,53 @@ def test_node_delay(tag, url=None, timeout_ms=5000):
     return {"tag": tag, "ok": isinstance(delay, int), "delay": delay if isinstance(delay, int) else None, "error": None if isinstance(delay, int) else "No delay returned"}
 
 
+def set_auto_now(tag):
+    if tag not in enabled_node_tags(load_nodes()):
+        raise ValueError(f"Unknown enabled node: {tag}")
+    return clash_api_request("/proxies/Auto", method="PUT", payload={"name": tag})
+
+
+def auto_selected_delay(auto_now, measured_delays):
+    if not auto_now:
+        return None
+    item = measured_delays.get(auto_now)
+    if isinstance(item, dict) and isinstance(item.get("delay"), int):
+        return item["delay"]
+    return read_delay_history(auto_now)
+
+
+def align_auto_now_with_measured_delays(measured_delays):
+    good = [item for item in measured_delays.values() if isinstance(item, dict) and item.get("ok") and isinstance(item.get("delay"), int)]
+    if not good:
+        return {"changed": False, "target": None, "reason": "no measured delays"}
+    best = min(good, key=lambda item: item["delay"])
+    state = get_proxy_state()
+    if not state.get("ok"):
+        return {"changed": False, "target": best["tag"], "error": state.get("error") or "Auto status unavailable"}
+    auto_now = state.get("data", {}).get("autoNow")
+    current_delay = auto_selected_delay(auto_now, measured_delays)
+    tolerance = normalize_non_negative_number(load_groups().get("auto", {}).get("tolerance", 50), 50)
+    if auto_now == best["tag"] or (isinstance(current_delay, int) and current_delay <= best["delay"] + tolerance):
+        return {"changed": False, "target": auto_now, "best": best["tag"], "bestDelay": best["delay"], "currentDelay": current_delay}
+    # 单次刷新里 UI 展示的是本轮逐节点测速结果；如果 Auto 仍停在明显更慢的旧选择，主动校准运行态，避免“Auto 选中”和延迟排序互相打架。
+    switched = set_auto_now(best["tag"])
+    return {
+        "changed": switched.get("ok", False),
+        "target": best["tag"],
+        "best": best["tag"],
+        "bestDelay": best["delay"],
+        "current": auto_now,
+        "currentDelay": current_delay,
+        "switch": switched,
+    }
+
+
 def refresh_proxy_delays():
     nodes = load_nodes()
     tags = enabled_node_tags(nodes)
     values = {}
     api_error = None
-    # 先请求 Auto 自身测速，让 sing-box 的 urltest 按真实运行态更新 now；单测节点只用于 UI 展示。
+    # 先请求 Auto 自身测速唤醒 urltest；逐节点测速后还会再校准一次，避免 Auto.now 读取旧一轮判断。
     auto_probe = test_node_delay("Auto", timeout_ms=8000) if tags else None
     if auto_probe and not auto_probe["ok"]:
         api_error = auto_probe.get("error")
@@ -2686,7 +2727,21 @@ def refresh_proxy_delays():
         values[tag] = item
         if not item["ok"] and not api_error:
             api_error = item.get("error")
-    return {"available": api_error is None, "error": api_error, "delays": values, "autoProbe": auto_probe}
+    # 逐节点 delay 会刷新各出站 history；这里再测 Auto，让 urltest 用同一轮最新结果重新选择 now。
+    auto_reprobe = test_node_delay("Auto", timeout_ms=8000) if tags else None
+    if auto_reprobe and not auto_reprobe["ok"] and not api_error:
+        api_error = auto_reprobe.get("error")
+    auto_align = align_auto_now_with_measured_delays(values) if tags else {"changed": False, "target": None}
+    if auto_align.get("switch") and not auto_align["switch"].get("ok") and not api_error:
+        api_error = auto_align["switch"].get("error") or "Auto switch failed"
+    return {
+        "available": api_error is None,
+        "error": api_error,
+        "delays": values,
+        "autoProbe": auto_probe,
+        "autoReprobe": auto_reprobe,
+        "autoAlign": auto_align,
+    }
 
 
 def current_proxy_payload(test_delays=False):

@@ -108,6 +108,8 @@ OpenRC 服务日志默认写入：
 - `/var/log/sing-box-gateway/rule-update.log`
 - `/var/log/sing-box-gateway/runtime-monitor.log`
 
+安装器会写入 `/etc/logrotate.d/sing-box-gateway`，对上述日志按单文件 5M 触发轮转，保留 6 份压缩归档，避免 OpenRC 和 cron 长期追加导致系统盘被日志撑满。
+
 ## 自动维护
 
 安装器会写入 root crontab：

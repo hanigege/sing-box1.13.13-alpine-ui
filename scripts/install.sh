@@ -11,12 +11,13 @@ RULE_DIR="$CONFIG_DIR/custom-rules"
 INSTALL_STATE_FILE="$MANAGER_DIR/install-state"
 RADVD_STATE_FILE="$MANAGER_DIR/radvd-state.before-sing-box"
 LOG_DIR="/var/log/sing-box-gateway"
+LOGROTATE_CONFIG="/etc/logrotate.d/sing-box-gateway"
 ROOT_CRONTAB="/etc/crontabs/root"
 RULE_UPDATE_CRON_MARKER_BEGIN="# BEGIN sing-box-gateway-ui rule update"
 RULE_UPDATE_CRON_MARKER_END="# END sing-box-gateway-ui rule update"
 MONITOR_CRON_MARKER_BEGIN="# BEGIN sing-box-gateway-ui runtime monitor"
 MONITOR_CRON_MARKER_END="# END sing-box-gateway-ui runtime monitor"
-APK_PACKAGES=(bash curl ca-certificates tar gzip python3 nftables iproute2 rsync util-linux coreutils openrc)
+APK_PACKAGES=(bash curl ca-certificates tar gzip python3 nftables iproute2 rsync util-linux coreutils openrc logrotate)
 PERFORMANCE_SYSCTL="/etc/sysctl.d/98-sing-box-performance.conf"
 
 need_root() {
@@ -209,6 +210,24 @@ install_files() {
   install -m 0755 "$PROJECT_DIR/openrc/sing-box" /etc/init.d/sing-box
   install -m 0755 "$PROJECT_DIR/openrc/sing-box-tproxy" /etc/init.d/sing-box-tproxy
   install -m 0755 "$PROJECT_DIR/openrc/singbox-rule-ui" /etc/init.d/singbox-rule-ui
+}
+
+install_logrotate_config() {
+  mkdir -p "$(dirname "$LOGROTATE_CONFIG")"
+  # OpenRC 的 output_log/error_log 和 crontab 都会长期追加写入；用 copytruncate 避免重启服务也能收敛日志大小。
+  cat > "$LOGROTATE_CONFIG" <<'EOF'
+/var/log/sing-box-gateway/*.log {
+    size 5M
+    rotate 6
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    create 0640 root root
+}
+EOF
+  chmod 0644 "$LOGROTATE_CONFIG"
 }
 
 bootstrap_config() {
@@ -465,6 +484,7 @@ main() {
   choose_sing_box_runtime
   install_packages
   install_files
+  install_logrotate_config
   bootstrap_config
   install_sing_box
   install_initial_rules
