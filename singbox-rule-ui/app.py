@@ -1666,6 +1666,27 @@ def parse_rule_update_schedule():
     }
 
 
+def next_rule_update_time(schedule):
+    if not schedule.get("customized"):
+        return ""
+    now = time.time()
+    current = time.localtime(now)
+    hour = int(schedule.get("hour", 4))
+    minute = int(schedule.get("minute", 20))
+    if schedule.get("frequency") == "daily":
+        candidate = time.mktime((current.tm_year, current.tm_mon, current.tm_mday, hour, minute, 0, current.tm_wday, current.tm_yday, current.tm_isdst))
+        if candidate <= now:
+            candidate += 24 * 60 * 60
+    else:
+        # cron 的 0/7 是周日；Python tm_wday 里周一是 0、周日是 6。
+        days_until_sunday = (6 - current.tm_wday) % 7
+        candidate = time.mktime((current.tm_year, current.tm_mon, current.tm_mday, hour, minute, 0, current.tm_wday, current.tm_yday, current.tm_isdst))
+        candidate += days_until_sunday * 24 * 60 * 60
+        if candidate <= now:
+            candidate += 7 * 24 * 60 * 60
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(candidate))
+
+
 def normalize_rule_update_schedule(payload):
     try:
         frequency = str(payload.get("frequency", "weekly")).strip()
@@ -2440,6 +2461,7 @@ def maintenance_status():
     current_v6 = current_ipv6_prefixes(iface)
     script_v6 = script_ipv6_prefixes(TPROXY_SCRIPT)
     schedule = parse_rule_update_schedule()
+    next_update = next_rule_update_time(schedule)
     telegram_cidr = load_telegram_cidr_data()
     return {
         "ruleUpdate": {
@@ -2447,7 +2469,7 @@ def maintenance_status():
             "scriptExists": RULE_UPDATE_SCRIPT.exists(),
             "timer": "crond",
             "timerActive": unit_status("crond"),
-            "next": "",
+            "next": next_update,
             "last": last_text,
             "result": result_text,
             "serviceState": unit_status("crond"),
