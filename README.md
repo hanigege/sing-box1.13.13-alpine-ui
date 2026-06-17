@@ -46,7 +46,7 @@ curl -fsSL https://scg.jgaga.tk/https://raw.githubusercontent.com/hanigege/sing-
 curl -fsSL https://github.com/hanigege/sing-box1.13.13-alpine-ui/raw/refs/heads/main/scripts/quick-install.sh | sh
 ```
 
-安装器会自动安装 Alpine 依赖：`bash`、`curl`、`ca-certificates`、`tar`、`gzip`、`python3`、`nftables`、`iproute2`、`rsync`、`util-linux`、`coreutils`、`openrc`。安装前已存在的包会记录为 preexisting，卸载时不会误删。
+安装器会自动安装 Alpine 依赖：`bash`、`curl`、`ca-certificates`、`tar`、`gzip`、`python3`、`nftables`、`iproute2`、`rsync`、`util-linux`、`coreutils`、`openrc`、`gcompat`。`gcompat` 用来运行仓库内置的 glibc Linux 版 sing-box 二进制。安装前已存在的包会记录为 preexisting，卸载时不会误删。
 
 如需指定架构：
 
