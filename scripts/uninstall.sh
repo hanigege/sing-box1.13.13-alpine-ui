@@ -128,6 +128,13 @@ remove_installed_packages_if_owned() {
   if ! command -v apk >/dev/null 2>&1; then
     return
   fi
+  case "${SING_BOX_GATEWAY_REMOVE_DEPS:-0}" in
+    1|true|TRUE|yes|YES|on|ON) ;;
+    *)
+      echo "Keeping apk packages. Set SING_BOX_GATEWAY_REMOVE_DEPS=1 to remove installer-added dependencies."
+      return
+      ;;
+  esac
   packages_to_remove=()
   for package in "${APK_PACKAGES[@]}"; do
     if [ "$(state_value "apk_${package}" "$INSTALL_STATE_FILE")" = "absent" ]; then

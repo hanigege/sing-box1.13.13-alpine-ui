@@ -7,8 +7,8 @@ ACTION="${1:-install}"
 PROXY_PREFIX="${SING_BOX_GATEWAY_PROXY_PREFIX:-https://scg.jgaga.tk/}"
 PROXY_PREFIXES="${SING_BOX_GATEWAY_PROXY_PREFIXES:-${PROXY_PREFIX},https://gh-proxy.com/,https://gh.llkk.cc/}"
 
-if ! command -v curl >/dev/null 2>&1; then
-  echo "缺少 curl，请先安装 curl：apk add --no-cache curl ca-certificates" >&2
+if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+  echo "缺少 curl/wget，请先安装 curl：apk add --no-cache curl ca-certificates" >&2
   exit 1
 fi
 
@@ -33,7 +33,11 @@ download_first() {
   for url in "$@"; do
     [ -n "$url" ] || continue
     echo "尝试下载: $url"
-    if curl -fL --connect-timeout 10 --max-time 120 "$url" -o "$output"; then
+    if command -v curl >/dev/null 2>&1; then
+      if curl -fL --connect-timeout 10 --max-time 120 "$url" -o "$output"; then
+        return 0
+      fi
+    elif wget -T 120 -O "$output" "$url"; then
       return 0
     fi
   done

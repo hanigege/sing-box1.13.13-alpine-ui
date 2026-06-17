@@ -36,17 +36,23 @@
 
 推荐使用反代入口：
 
-```bash
+```sh
 curl -fsSL https://scg.jgaga.tk/https://raw.githubusercontent.com/hanigege/sing-box1.13.13-alpine-ui/main/scripts/quick-install.sh | sh
 ```
 
 如果当前机器直连 GitHub 稳定，也可以使用官方入口：
 
-```bash
+```sh
 curl -fsSL https://github.com/hanigege/sing-box1.13.13-alpine-ui/raw/refs/heads/main/scripts/quick-install.sh | sh
 ```
 
-安装器会自动安装 Alpine 依赖：`bash`、`curl`、`ca-certificates`、`tar`、`gzip`、`python3`、`nftables`、`iproute2`、`rsync`、`util-linux`、`coreutils`、`openrc`、`gcompat`。`gcompat` 用来运行仓库内置的 glibc Linux 版 sing-box 二进制。安装前已存在的包会记录为 preexisting，卸载时不会误删。
+裸 Alpine 默认有 BusyBox `wget`，没有 `curl` 也可以用这个入口：
+
+```sh
+wget -O- https://github.com/hanigege/sing-box1.13.13-alpine-ui/raw/refs/heads/main/scripts/quick-install.sh | sh
+```
+
+安装器会自动安装 Alpine 依赖：`bash`、`curl`、`ca-certificates`、`tar`、`gzip`、`python3`、`nftables`、`iproute2`、`rsync`、`util-linux`、`coreutils`、`openrc`、`gcompat`。`gcompat` 用来运行仓库内置的 glibc Linux 版 sing-box 二进制。卸载时默认保留 apk 包，避免连带移除系统基础依赖。
 
 如需指定架构：
 
@@ -151,7 +157,13 @@ http://<网关IP>:9091/
 
 默认卸载会停止并禁用本项目 OpenRC 服务，清理 TProxy nft/routing 运行规则，移除本项目 crontab 块，按安装前记录恢复 `radvd` 状态，并删除本项目安装的 UI、辅助脚本、运行配置、规则缓存和 `/etc/sing-box`。
 
-如果 `/usr/local/bin/sing-box` 或 apk 依赖包是本安装器新增的，也会删除；如果安装前已经存在，则默认保留，避免误删用户原有程序或系统基础包。
+如果 `/usr/local/bin/sing-box` 是本安装器新增的，默认会删除；如果安装前已经存在，则默认保留，避免误删用户原有程序。
+
+卸载器默认不删除 apk 依赖包，因为 Alpine 的包依赖关系可能把多个基础工具连带移除。确实要删除安装器新增依赖时，显式设置：
+
+```bash
+SING_BOX_GATEWAY_REMOVE_DEPS=1 /usr/local/bin/sing-box-gateway-uninstall --yes
+```
 
 如果没有安装状态记录，但你仍然确认要删除 `/usr/local/bin/sing-box`，可以使用 purge：
 
