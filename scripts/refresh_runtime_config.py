@@ -10,6 +10,7 @@ from pathlib import Path
 
 CONFIG_PATH = Path("/etc/sing-box/config.json")
 APP_DIR = Path("/opt/singbox-rule-ui")
+SING_BOX_BIN = Path("/usr/local/bin/sing-box")
 
 
 def default_lan_ip():
@@ -155,6 +156,25 @@ def atomic_write_text(path, text):
             temp_path.unlink()
 
 
+def check_rendered_config(path, text):
+    # 运行态刷新同样遵守“先 check 再落盘”：正式 config.json 只有在 sing-box 能解析时才会被替换。
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.check-", suffix=".tmp", dir=str(path.parent))
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        result = subprocess.run([str(SING_BOX_BIN), "check", "-c", str(temp_path)], text=True, capture_output=True, timeout=30)
+        if result.returncode != 0:
+            message = (result.stderr or result.stdout or "sing-box check failed").strip()
+            raise RuntimeError(message)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+
+
 def main():
     if not CONFIG_PATH.exists():
         return 0
@@ -165,6 +185,7 @@ def main():
     listener_changed = apply_runtime_listeners(config, lan_ip, ipv6_listen)
     rendered = json.dumps(config, indent=2, ensure_ascii=False) + "\n"
     if rendered != previous:
+        check_rendered_config(CONFIG_PATH, rendered)
         atomic_write_text(CONFIG_PATH, rendered)
         print(f"Rendered sing-box config and updated listeners for {lan_ip}.")
     elif listener_changed:
