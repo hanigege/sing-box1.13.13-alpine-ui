@@ -650,7 +650,12 @@ async function api(path, options = {}) {
   if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
   const response = await fetch(path, { ...options, headers });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.check?.stderr || body.error || `HTTP ${response.status}`);
+  if (!response.ok) {
+    const updateMessage = [body.update?.stderr, body.update?.stdout].filter(Boolean).join("\n");
+    const telegramMessage = (body.telegramCidrUpdate?.errors || []).join("; ");
+    // 后端维护入口会把脚本 stdout/stderr 放在不同字段；统一提取，避免 UI 只显示 HTTP 500 而看不到真实失败原因。
+    throw new Error(updateMessage || telegramMessage || body.check?.stderr || body.error || `HTTP ${response.status}`);
+  }
   return body;
 }
 
@@ -1137,8 +1142,27 @@ function renderMaintenanceDetails(titleText, items, note = "") {
   return details;
 }
 
+function formatLocalDateTime(unixSeconds, fallback = "") {
+  const timestamp = Number(unixSeconds);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return fallback;
+  const date = new Date(timestamp * 1000);
+  const parts = new Intl.DateTimeFormat([], {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZoneName: "shortOffset",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  // 后端保存的是 Unix 时间戳；这里按浏览器时区显示，避免服务器 UTC 时间和用户本地时间混在一起。
+  return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second} ${values.timeZoneName || ""}`.trim();
+}
+
 function formatTelegramCidrSummary(data) {
-  const updated = data?.updatedAt || t("telegramCidrNever");
+  const updated = formatLocalDateTime(data?.updatedAtUnix, data?.updatedAt || t("telegramCidrNever"));
   const source = data?.fallback ? t("telegramCidrFallback") : data?.source || t("unknown");
   return t("telegramCidrSummary")
     .replace("{source}", source)

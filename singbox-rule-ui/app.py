@@ -43,6 +43,7 @@ TPROXY_SYSCTL = Path(os.environ.get("RULE_UI_TPROXY_SYSCTL", "/etc/sysctl.d/99-s
 RADVD_CONF = Path(os.environ.get("RULE_UI_RADVD_CONF", "/etc/radvd.conf"))
 RADVD_SERVICE = os.environ.get("RULE_UI_RADVD_SERVICE", "radvd")
 ENABLE_RADVD = os.environ.get("SING_BOX_GATEWAY_ENABLE_RADVD", os.environ.get("RULE_UI_ENABLE_RADVD", "0")).lower() in ("1", "true", "yes", "on")
+ENABLE_GATEWAY_FORWARDING = os.environ.get("SING_BOX_GATEWAY_ENABLE_FORWARDING", os.environ.get("RULE_UI_ENABLE_FORWARDING", "0")).lower() in ("1", "true", "yes", "on")
 TPROXY_PORT = int(os.environ.get("RULE_UI_TPROXY_PORT", "9888"))
 TPROXY_MARK = int(os.environ.get("RULE_UI_TPROXY_MARK", "1"))
 TPROXY_TABLE = int(os.environ.get("RULE_UI_TPROXY_TABLE", "100"))
@@ -107,6 +108,8 @@ DEFAULT_TELEGRAM_PROXY_IPV6 = (
     "2a0a:f280::/32",
 )
 DEFAULT_TELEGRAM_CIDR_SOURCES = (
+    "https://scg.jgaga.tk/https://core.telegram.org/resources/cidr.txt",
+    "https://scg.jgaga.tk/https://raw.githubusercontent.com/fernvenue/telegram-cidr-list/master/CIDR.txt",
     "https://core.telegram.org/resources/cidr.txt",
     "https://raw.githubusercontent.com/fernvenue/telegram-cidr-list/master/CIDR.txt",
 )
@@ -458,6 +461,7 @@ def load_telegram_cidr_data():
         "path": str(TELEGRAM_CIDR_PATH),
         "source": data.get("source") or "built-in default",
         "updatedAt": data.get("updatedAt") or "",
+        "updatedAtUnix": data.get("updatedAtUnix") or 0,
         "fallback": fallback,
         "cidrs": [*split["ipv4"], *split["ipv6"]],
         "ipv4": split["ipv4"],
@@ -470,12 +474,15 @@ def load_telegram_cidr_data():
 
 def save_telegram_cidrs(cidrs, source="manual"):
     normalized = normalize_telegram_cidrs(cidrs)
+    updated_at_unix = int(time.time())
     MANAGER_DIR.mkdir(parents=True, exist_ok=True)
     write_json(
         TELEGRAM_CIDR_PATH,
         {
             "source": source,
-            "updatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "updatedAt": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(updated_at_unix)),
+            # 页面按浏览器本地时区格式化时间；避免生产机使用 UTC 时让用户误以为更新时间没有变化。
+            "updatedAtUnix": updated_at_unix,
             "cidrs": normalized,
         },
     )
@@ -549,8 +556,11 @@ def update_telegram_cidrs():
     if RULE_UPDATE_SCRIPT.exists():
         env = os.environ.copy()
         env.setdefault("RULE_UPDATE_RESTART", "0")
+        # Telegram IP 网段更新只需要刷新 manager/telegram-cidr.json 并同步 TProxy；
+        # 复用完整规则更新会额外下载 geosite/geoip，导致 UI 小按钮被慢镜像拖住。
+        env.setdefault("RULE_UPDATE_ONLY_TELEGRAM_CIDR", "1")
         env.setdefault("RULE_UPDATE_TELEGRAM_CIDR_SOURCES", " ".join(TELEGRAM_CIDR_SOURCES))
-        result = subprocess.run([str(RULE_UPDATE_SCRIPT)], capture_output=True, text=True, timeout=300, env=env)
+        result = subprocess.run([str(RULE_UPDATE_SCRIPT)], capture_output=True, text=True, timeout=60, env=env)
         if result.returncode == 0:
             data = load_telegram_cidr_data()
             sync = sync_tproxy()
@@ -562,6 +572,9 @@ def update_telegram_cidrs():
                 "errors": [],
                 "script": {"code": result.returncode, "stdout": result.stdout.strip(), "stderr": result.stderr.strip()},
             }
+        if result.returncode == 75:
+            # 锁冲突说明已有规则更新正在写同一批文件；不能降级为并发直连下载，否则会破坏脚本的互斥语义。
+            return {"ok": False, "source": "", "telegramCidr": load_telegram_cidr_data(), "tproxySync": None, "errors": [result.stderr.strip() or result.stdout.strip() or "another rule update is already running"]}
         errors.append(f"{RULE_UPDATE_SCRIPT}: {result.stderr.strip() or result.stdout.strip() or f'exited {result.returncode}'}")
     for source in TELEGRAM_CIDR_SOURCES:
         try:
@@ -2304,13 +2317,20 @@ TPROXY_PORT={TPROXY_PORT}
 TPROXY_MARK={TPROXY_MARK}
 TPROXY_TABLE={TPROXY_TABLE}
 
-sysctl -w net.ipv4.ip_forward=1 >/dev/null
+# 运行态只设置 TProxy/FakeIP 必需项；TCP 队列、缓冲和其它性能参数交给 PVE/LXC 管理员手动统一配置。
+sysctl -w net.ipv4.ip_nonlocal_bind=1 >/dev/null 2>&1 || true
+case "${{SING_BOX_GATEWAY_ENABLE_FORWARDING:-${{RULE_UI_ENABLE_FORWARDING:-0}}}}" in
+  1|true|TRUE|yes|YES|on|ON)
+  # 只有 LXC 真的承担三层网关时才打开转发；FakeIP 入口模式不应把旁路机升级成默认网关角色。
+  sysctl -w net.ipv4.ip_forward=1 >/dev/null
+  sysctl -w net.ipv6.conf.all.forwarding=1 >/dev/null
+  sysctl -w net.ipv6.conf.default.forwarding=1 >/dev/null
+  sysctl -w "net.ipv6.conf.${{IFACE}}.forwarding=1" >/dev/null 2>&1 || true
+  ;;
+esac
 sysctl -w net.ipv4.conf.all.rp_filter=0 >/dev/null
 sysctl -w net.ipv4.conf.default.rp_filter=0 >/dev/null
 sysctl -w "net.ipv4.conf.${{IFACE}}.rp_filter=0" >/dev/null 2>&1 || true
-sysctl -w net.ipv6.conf.all.forwarding=1 >/dev/null
-sysctl -w net.ipv6.conf.default.forwarding=1 >/dev/null
-sysctl -w "net.ipv6.conf.${{IFACE}}.forwarding=1" >/dev/null 2>&1 || true
 sysctl -w "net.ipv6.conf.${{IFACE}}.accept_ra=2" >/dev/null 2>&1 || true
 sysctl -w "net.ipv6.conf.${{IFACE}}.accept_ra_defrtr=1" >/dev/null 2>&1 || true
 
@@ -2451,20 +2471,27 @@ def sync_radvd(interface):
 
 
 def render_tproxy_sysctl(interface):
-    return "\n".join(
-        [
-            "net.ipv4.ip_forward=1",
-            "net.ipv4.conf.all.rp_filter=0",
-            "net.ipv4.conf.default.rp_filter=0",
-            f"net.ipv4.conf.{interface}.rp_filter=0",
-            "net.ipv6.conf.all.forwarding=1",
-            "net.ipv6.conf.default.forwarding=1",
-            f"net.ipv6.conf.{interface}.forwarding=1",
-            f"net.ipv6.conf.{interface}.accept_ra=2",
-            f"net.ipv6.conf.{interface}.accept_ra_defrtr=1",
-            "",
-        ]
-    )
+    values = [
+        "# FakeIP 入口模式只保留透明代理必需参数；性能 sysctl 请在 PVE 和 LXC 两侧手动统一配置。",
+        "net.ipv4.ip_nonlocal_bind=1",
+        "net.ipv4.conf.all.rp_filter=0",
+        "net.ipv4.conf.default.rp_filter=0",
+        f"net.ipv4.conf.{interface}.rp_filter=0",
+        f"net.ipv6.conf.{interface}.accept_ra=2",
+        f"net.ipv6.conf.{interface}.accept_ra_defrtr=1",
+    ]
+    if ENABLE_GATEWAY_FORWARDING:
+        values.extend(
+            [
+                "# 显式网关模式：客户端默认网关或路由指向本机时，才需要打开 IPv4/IPv6 转发。",
+                "net.ipv4.ip_forward=1",
+                "net.ipv6.conf.all.forwarding=1",
+                "net.ipv6.conf.default.forwarding=1",
+                f"net.ipv6.conf.{interface}.forwarding=1",
+            ]
+        )
+    values.append("")
+    return "\n".join(values)
 
 
 def sync_tproxy(nodes=None, groups=None, normalized_lists=None):

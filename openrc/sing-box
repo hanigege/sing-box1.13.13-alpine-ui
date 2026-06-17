@@ -9,8 +9,8 @@ pidfile="/run/${RC_SVCNAME}.pid"
 output_log="/var/log/sing-box-gateway/sing-box.log"
 error_log="/var/log/sing-box-gateway/sing-box.log"
 retry="TERM/10/KILL/5"
-# OpenRC 没有 systemd 的 LimitNOFILE；PVE/LXC 常见硬上限是 524288，默认贴合容器上限避免启动告警。
-rc_ulimit="${SING_BOX_RC_ULIMIT:--n 524288}"
+# OpenRC 没有 systemd 的 LimitNOFILE；高并发代理要把进程级 nofile 提高，容器层仍需配合 lxc.prlimit.nofile。
+rc_ulimit="${SING_BOX_RC_ULIMIT:--n 1048576}"
 
 depend() {
   need net

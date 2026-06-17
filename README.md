@@ -61,6 +61,8 @@ wget -O- https://github.com/hanigege/sing-box1.13.13-alpine-ui/raw/refs/heads/ma
 SING_BOX_ARCH=arm64 bash scripts/install.sh
 ```
 
+如果安装在 Proxmox VE 的 Alpine LXC 里，一键安装只负责容器内的 sing-box、TProxy、OpenRC 和 Rule UI，不会改 PVE 宿主机配置，也不能替你写 `/etc/pve/lxc/<CTID>.conf`。高并发或高带宽场景建议安装后继续看下面的“Proxmox VE / LXC 可选优化”。
+
 ## 53 端口和 DNS
 
 Alpine 默认通常没有 `systemd-resolved` 占用 53 端口。本仓库按 Alpine 预期处理：
@@ -136,7 +138,102 @@ SING_BOX_GATEWAY_ENABLE_RADVD=1 /usr/local/sbin/refresh-sing-box-runtime-config
 
 生产网络里不建议在多台旁路机上同时启用 RA 广播。一般更稳的做法是：前端软路由继续作为默认网关，只把 FakeIP 网段或指定流量路由到 sing-box 机器。
 
-## 网关性能参数
+## TProxy 转发模式
+
+默认按“非网关 TProxy + FakeIP 入口”部署：上游路由器继续做默认网关，只把 FakeIP 或灰名单 CIDR 路由到这台 Alpine LXC。安装器和 UI 生成的 `/etc/sysctl.d/99-sing-box-tproxy.conf` 只保留 TProxy/FakeIP 必需参数，例如 `ip_nonlocal_bind`、`rp_filter` 和当前网卡的 IPv6 RA 接收项，不会默认开启 `net.ipv4.ip_forward` 或 IPv6 forwarding，也不会写入 TCP 队列、缓冲等性能 sysctl，避免容器内参数和 PVE 宿主机上限不一致。
+
+如果第三方设备的默认网关或明确路由已经指向本机，需要让 LXC 作为代理网关，再显式开启：
+
+```bash
+SING_BOX_GATEWAY_ENABLE_FORWARDING=1 rc-service sing-box-tproxy restart
+```
+
+如果要持久启用，可以把 `SING_BOX_GATEWAY_ENABLE_FORWARDING=1` 写入 `/etc/conf.d/sing-box-tproxy`，之后再重启服务。这个开关只影响容器内转发类 sysctl。PVE 宿主机上的 BBR、缓冲区、conntrack 和 LXC 的 `lxc.prlimit.nofile` 仍建议按实际链路手动配置。
+
+## Proxmox VE / LXC 可选优化
+
+这部分只适合 Proxmox VE 宿主机上的 Alpine LXC。它不是一键安装器的一部分，因为 PVE 宿主机和 LXC 配置属于容器外部边界，安装脚本不应该从容器内自动修改宿主机。
+
+### PVE 宿主机网络参数
+
+在 PVE 宿主机上追加或确认 `/etc/sysctl.conf`：
+
+```conf
+# sing-box LXC 公共优化：由 PVE 宿主机承担全局内核调优
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.core.somaxconn = 32768
+net.ipv4.tcp_max_syn_backlog = 16384
+net.core.netdev_max_backlog = 65536
+net.core.rmem_max = 134217728
+net.core.wmem_max = 134217728
+net.ipv4.tcp_rmem = 4096 87380 67108864
+net.ipv4.tcp_wmem = 4096 65536 67108864
+net.core.rmem_default = 4194304
+net.core.wmem_default = 4194304
+fs.file-max = 2097152
+fs.nr_open = 2097152
+```
+
+应用并检查：
+
+```bash
+sysctl -p
+sysctl net.ipv4.tcp_congestion_control net.core.default_qdisc
+sysctl net.core.rmem_max net.core.wmem_max fs.file-max fs.nr_open
+```
+
+`net.netfilter.nf_conntrack_max` 在部分 PVE 内核上会被已加载的 `nf_conntrack` 模块限制或回退。如果运行态反复回到默认值，可以先不强求；对本项目的 FakeIP/TProxy 入口模式来说，`nofile`、缓冲区和服务稳定性更关键。
+
+### PVE 放宽指定 LXC 的 nofile
+
+在 PVE 宿主机查看容器 ID：
+
+```bash
+pct list
+```
+
+编辑对应容器配置，例如容器 ID 是 `116`：
+
+```bash
+nano /etc/pve/lxc/116.conf
+```
+
+追加：
+
+```conf
+# 允许容器内 sing-box 使用更高打开文件数上限。
+lxc.prlimit.nofile: 1048576:1048576
+```
+
+然后重启这个 LXC：
+
+```bash
+pct reboot 116
+```
+
+进入 Alpine LXC 后验证：
+
+```bash
+ulimit -n
+cat /proc/1/limits | grep 'Max open files'
+cat /proc/$(pidof sing-box)/limits | grep 'Max open files'
+```
+
+正常应看到 `1048576`。本仓库的 OpenRC `sing-box` 服务默认已经设置 `rc_ulimit="-n 1048576"`；如果容器层没有放宽，服务进程仍会被 PVE LXC 上限压住。
+
+### Alpine LXC 内的 TProxy 参数
+
+安装器和 Rule UI 会生成 `/etc/sysctl.d/99-sing-box-tproxy.conf`，默认是非网关 FakeIP 入口模式，只包含透明代理入口需要的参数，不默认开启 `ip_forward`，也不写 TCP/UDP 性能参数。安装后可以检查：
+
+```bash
+cat /etc/sysctl.d/99-sing-box-tproxy.conf
+sysctl net.ipv4.ip_nonlocal_bind net.ipv4.conf.all.rp_filter
+```
+
+如果这台 LXC 确实作为客户端默认网关，再按上面的“TProxy 转发模式”显式开启 forwarding。
+
+## 通用性能参数
 
 安装器默认不写入 TCP/UDP 性能 sysctl，也不会启用 BBR 或修改缓冲参数。不同 VPS、LXC、PVE 和家庭宽带链路对内核参数的反应差异很大，自动捆绑调参可能让部分环境变慢。
 
