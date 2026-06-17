@@ -32,7 +32,6 @@ BACKUP_DIR = MANAGER_DIR / "backups"
 RULE_UPDATE_LAST_PATH = MANAGER_DIR / "rule-update-last.json"
 TELEGRAM_CIDR_PATH = MANAGER_DIR / "telegram-cidr.json"
 RULE_UPDATE_SCRIPT = Path(os.environ.get("RULE_UI_RULE_UPDATE_SCRIPT", "/usr/local/sbin/update-sing-box-rules-jsdelivr"))
-SING_BOX_LOG_PATH = Path(os.environ.get("RULE_UI_SING_BOX_LOG", "/var/log/sing-box-gateway/sing-box.log"))
 ROOT_CRONTAB = Path(os.environ.get("RULE_UI_ROOT_CRONTAB", "/etc/crontabs/root"))
 RULE_UPDATE_CRON_BEGIN = "# BEGIN sing-box-gateway-ui rule update"
 RULE_UPDATE_CRON_END = "# END sing-box-gateway-ui rule update"
@@ -784,6 +783,7 @@ def render_config(nodes=None, groups=None, rule_dir=RULE_DIR, normalized_lists=N
     apply_whitelist_dns_direct(config)
     apply_greylist_dns_fakeip(config, groups)
     apply_inbound_dns_fakeip_fallback(config, groups)
+    apply_lan_probe_dns_reject(config)
     apply_ddns_dns_settings(config, groups)
     apply_fakeip_route_rule(config, groups)
     apply_direct_speedtest_route(config)
@@ -1415,6 +1415,35 @@ def is_lan_aaaa_reject_rule(rule):
     return isinstance(rule, dict) and rule.get("query_type") == ["AAAA"] and rule.get("action") == "reject" and "inbound" in rule
 
 
+def apply_lan_probe_dns_reject(config):
+    dns_rules = config.setdefault("dns", {}).setdefault("rules", [])
+    dns_inbounds = dns_inbound_tags(config)
+    dns_rules[:] = [rule for rule in dns_rules if not is_lan_probe_reject_rule(rule)]
+    insert_at = 0
+    for index, rule in enumerate(dns_rules):
+        if isinstance(rule, dict) and same_inbound(rule.get("inbound"), dns_inbounds):
+            insert_at = index + 1
+    # 局域网客户端会频繁探测 AD/mDNS/单标签主机名；这些名字不应送往远端 DNS，否则会刷 timeout/error 日志。
+    dns_rules.insert(
+        insert_at,
+        {
+            "inbound": dns_inbounds,
+            "domain_suffix": ["local"],
+            "domain_regex": [r"^[^.]+$", r"^_(ldap|gc)\._tcp\..+"],
+            "action": "reject",
+        },
+    )
+
+
+def is_lan_probe_reject_rule(rule):
+    return (
+        isinstance(rule, dict)
+        and rule.get("action") == "reject"
+        and "inbound" in rule
+        and rule.get("domain_regex") == [r"^[^.]+$", r"^_(ldap|gc)\._tcp\..+"]
+    )
+
+
 def dns_inbound_tags(config):
     tags = []
     for inbound in config.get("inbounds", []) or []:
@@ -1751,16 +1780,6 @@ def recent_unit_logs(unit, lines=80):
         text = ""
     parts = re.split(r"(?=^.*sing-box rule)", text, flags=re.MULTILINE)
     return parts[-1] if parts else text
-
-
-def recent_sing_box_logs(lines=80):
-    try:
-        raw_lines = SING_BOX_LOG_PATH.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:]
-    except FileNotFoundError:
-        return []
-    # OpenRC 日志保留 sing-box 的 ANSI 颜色码；运行状态页展示前清理，避免浏览器里出现转义字符。
-    ansi = re.compile(r"\x1b\[[0-9;]*m")
-    return [ansi.sub("", line).strip() for line in raw_lines if line.strip()]
 
 
 def rule_update_summary(text):
@@ -3162,28 +3181,6 @@ class Handler(BaseHTTPRequestHandler):
         headers = {}
         if api_secret:
             headers["Authorization"] = f"Bearer {api_secret}"
-        if path.startswith("/logs?"):
-            self.send_response(200)
-            self.send_header("Content-Type", content_type)
-            self.end_headers()
-            # 实时日志上游可能在没有新事件时阻塞；先回显近期文件日志，保证运行状态页首屏不是空白。
-            for line in recent_sing_box_logs():
-                self.wfile.write((line + "\n").encode("utf-8"))
-            self.wfile.flush()
-            request = Request(f"{api_url}{path}", headers=headers)
-            try:
-                with urlopen(request, timeout=timeout) as response:
-                    while True:
-                        chunk = response.read(4096)
-                        if not chunk:
-                            break
-                        self.wfile.write(chunk)
-                        self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
-                return
-            except (HTTPError, URLError, TimeoutError, OSError):
-                return
-            return
         # 9091 已经完成 Rule UI token 鉴权；这里仅用后端读取到的 Clash secret 访问白名单接口，不能把 secret 暴露给浏览器。
         request = Request(f"{api_url}{path}", headers=headers)
         try:

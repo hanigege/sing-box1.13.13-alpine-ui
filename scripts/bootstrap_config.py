@@ -167,6 +167,8 @@ def base_config(lan_ip, ui_secret, fake4, fake6, ipv6_dns_listen):
                 {"inbound": dns_inbounds, "rule_set": ["geosite-cn", "geosite-geolocation-cn", "geosite-icloud@cn", "geosite-apple@cn"], "action": "route", "server": "local-dns", "rewrite_ttl": 60},
                 {"inbound": dns_inbounds, "rule_set": ["geosite-geolocation-!cn"], "action": "route", "server": "fakeip-dns", "rewrite_ttl": 60, "query_type": ["A", "AAAA"]},
                 {"inbound": dns_inbounds, "query_type": ["A", "AAAA"], "action": "route", "server": "fakeip-dns", "rewrite_ttl": 60},
+                # 局域网 AD/mDNS/单标签主机名探测不送上游，避免无意义 timeout/error 刷屏。
+                {"inbound": dns_inbounds, "domain_suffix": ["local"], "domain_regex": [r"^[^.]+$", r"^_(ldap|gc)\._tcp\..+"], "action": "reject"},
                 {"rule_set": ["geosite-cn", "geosite-geolocation-cn", "geosite-icloud@cn", "geosite-apple@cn"], "action": "route", "server": "local-dns", "rewrite_ttl": 60},
                 {"rule_set": ["geosite-geolocation-!cn"], "action": "route", "server": "remote-dns", "rewrite_ttl": 60},
             ],
