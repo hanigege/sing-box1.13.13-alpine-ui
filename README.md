@@ -220,7 +220,7 @@ cat /proc/1/limits | grep 'Max open files'
 cat /proc/$(pidof sing-box)/limits | grep 'Max open files'
 ```
 
-正常应看到 `1048576`。本仓库的 OpenRC `sing-box` 服务默认已经设置 `rc_ulimit="-n 1048576"`；如果容器层没有放宽，服务进程仍会被 PVE LXC 上限压住。
+正常应看到 `1048576`。如果需要提高 `sing-box` 服务进程的打开文件数，请先在 PVE LXC 层放宽 `lxc.prlimit.nofile`，再按现场策略单独配置。
 
 ### Alpine LXC 内的 TProxy 参数
 
