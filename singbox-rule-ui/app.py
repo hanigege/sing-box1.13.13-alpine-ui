@@ -2780,6 +2780,26 @@ def set_auto_now(tag):
     return clash_api_request("/proxies/Auto", method="PUT", payload={"name": tag})
 
 
+def set_auto_now_checked(tag, attempts=5, delay=0.35):
+    last_result = None
+    for _ in range(attempts):
+        last_result = set_auto_now(tag)
+        # Clash API 的 PUT 成功不等于 urltest 的 now 已经刷新；必须回读确认，避免 UI 继续显示旧 Auto 节点。
+        state = get_proxy_state()
+        auto_now = state.get("data", {}).get("autoNow") if state.get("ok") else None
+        if last_result.get("ok") and auto_now == tag:
+            return {"ok": True, "code": last_result["code"], "data": state["data"]}
+        time.sleep(delay)
+    state = get_proxy_state()
+    return {
+        "ok": False,
+        "code": (last_result or {}).get("code", 0),
+        "error": f"Auto did not switch to {tag}",
+        "data": state.get("data") if isinstance(state, dict) else None,
+        "lastResult": last_result,
+    }
+
+
 def auto_selected_delay(auto_now, measured_delays):
     if not auto_now:
         return None
@@ -2787,6 +2807,19 @@ def auto_selected_delay(auto_now, measured_delays):
     if isinstance(item, dict) and isinstance(item.get("delay"), int):
         return item["delay"]
     return read_delay_history(auto_now)
+
+
+def auto_alignment_decision(auto_now, current_delay, best_tag, best_delay, tolerance):
+    if not best_tag or not isinstance(best_delay, int):
+        return {"shouldSwitch": False, "target": auto_now, "reason": "no best delay"}
+    if auto_now == best_tag:
+        return {"shouldSwitch": False, "target": auto_now, "reason": "already best"}
+    if not auto_now or not isinstance(current_delay, int):
+        return {"shouldSwitch": True, "target": best_tag, "reason": "current delay unavailable"}
+    threshold = best_delay + tolerance
+    if current_delay > threshold:
+        return {"shouldSwitch": True, "target": best_tag, "reason": "current slower than tolerance", "threshold": threshold}
+    return {"shouldSwitch": False, "target": auto_now, "reason": "current within tolerance", "threshold": threshold}
 
 
 def align_auto_now_with_measured_delays(measured_delays):
@@ -2800,17 +2833,31 @@ def align_auto_now_with_measured_delays(measured_delays):
     auto_now = state.get("data", {}).get("autoNow")
     current_delay = auto_selected_delay(auto_now, measured_delays)
     tolerance = normalize_non_negative_number(load_groups().get("auto", {}).get("tolerance", 50), 50)
-    if auto_now == best["tag"] or (isinstance(current_delay, int) and current_delay <= best["delay"] + tolerance):
-        return {"changed": False, "target": auto_now, "best": best["tag"], "bestDelay": best["delay"], "currentDelay": current_delay}
-    # 单次刷新里 UI 展示的是本轮逐节点测速结果；如果 Auto 仍停在明显更慢的旧选择，主动校准运行态，避免“Auto 选中”和延迟排序互相打架。
-    switched = set_auto_now(best["tag"])
+    decision = auto_alignment_decision(auto_now, current_delay, best["tag"], best["delay"], tolerance)
+    if not decision["shouldSwitch"]:
+        return {
+            "changed": False,
+            "target": decision["target"],
+            "best": best["tag"],
+            "bestDelay": best["delay"],
+            "current": auto_now,
+            "currentDelay": current_delay,
+            "tolerance": tolerance,
+            "reason": decision["reason"],
+            "threshold": decision.get("threshold"),
+        }
+    # 单次刷新里 UI 展示的是本轮逐节点测速结果；如果 Auto 比本轮最低延迟慢过用户容差，就主动校准运行态。
+    switched = set_auto_now_checked(best["tag"])
     return {
         "changed": switched.get("ok", False),
-        "target": best["tag"],
+        "target": decision["target"],
         "best": best["tag"],
         "bestDelay": best["delay"],
         "current": auto_now,
         "currentDelay": current_delay,
+        "tolerance": tolerance,
+        "reason": decision["reason"],
+        "threshold": decision.get("threshold"),
         "switch": switched,
     }
 
