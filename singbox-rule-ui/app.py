@@ -776,6 +776,14 @@ def enabled_node_tags(nodes):
     return [node["outbound"]["tag"] for node in nodes if node.get("enabled", True)]
 
 
+def preferred_auto_outbounds(tags, groups):
+    preferred = str(groups.get("auto", {}).get("preferred", "")).strip()
+    if preferred in tags:
+        # urltest 重启后会按 outbounds 顺序在容差内挑选；把保存前 Auto 子节点放前面，避免保存容差时回到列表第一个。
+        return [preferred, *[tag for tag in tags if tag != preferred]]
+    return tags
+
+
 def render_config(nodes=None, groups=None, rule_dir=RULE_DIR, normalized_lists=None):
     ensure_manager_data()
     nodes = normalize_nodes(nodes if nodes is not None else load_nodes())
@@ -816,7 +824,7 @@ def render_config(nodes=None, groups=None, rule_dir=RULE_DIR, normalized_lists=N
     auto = {
         "type": "urltest",
         "tag": "Auto",
-        "outbounds": tags,
+        "outbounds": preferred_auto_outbounds(tags, groups),
         "url": groups.get("auto", {}).get("url", "https://www.gstatic.com/generate_204"),
         "interval": groups.get("auto", {}).get("interval", "30s"),
         "tolerance": groups.get("auto", {}).get("tolerance", 50),
@@ -2780,22 +2788,33 @@ def set_auto_now(tag):
     return clash_api_request("/proxies/Auto", method="PUT", payload={"name": tag})
 
 
-def set_auto_now_checked(tag, attempts=5, delay=0.35):
+def wait_for_proxy_runtime(attempts=20, delay=0.5):
+    last_state = None
+    for _ in range(attempts):
+        last_state = get_proxy_state()
+        if last_state.get("ok") and "Auto" in (last_state.get("data", {}).get("all") or []):
+            return last_state
+        time.sleep(delay)
+    return last_state or {"ok": False, "error": "Proxy runtime unavailable"}
+
+
+def set_auto_now_checked(tag, attempts=16, delay=0.5):
     last_result = None
+    last_state = None
     for _ in range(attempts):
         last_result = set_auto_now(tag)
         # Clash API 的 PUT 成功不等于 urltest 的 now 已经刷新；必须回读确认，避免 UI 继续显示旧 Auto 节点。
-        state = get_proxy_state()
-        auto_now = state.get("data", {}).get("autoNow") if state.get("ok") else None
+        last_state = get_proxy_state()
+        auto_now = last_state.get("data", {}).get("autoNow") if last_state.get("ok") else None
         if last_result.get("ok") and auto_now == tag:
-            return {"ok": True, "code": last_result["code"], "data": state["data"]}
+            return {"ok": True, "code": last_result["code"], "data": last_state["data"]}
         time.sleep(delay)
-    state = get_proxy_state()
+    last_state = get_proxy_state()
     return {
         "ok": False,
         "code": (last_result or {}).get("code", 0),
         "error": f"Auto did not switch to {tag}",
-        "data": state.get("data") if isinstance(state, dict) else None,
+        "data": last_state.get("data") if isinstance(last_state, dict) else None,
         "lastResult": last_result,
     }
 
@@ -2900,13 +2919,34 @@ def current_proxy_payload(test_delays=False):
 def current_proxy_payload_with_history_alignment():
     delays = get_node_delays(test=False)
     delay_values = delays.get("delays", {}) if isinstance(delays, dict) else {}
-    auto_align = align_auto_now_with_measured_delays(delay_values) if delay_values else {"changed": False, "target": None}
+    if delay_values:
+        state = get_proxy_state()
+        auto_now = state.get("data", {}).get("autoNow") if state.get("ok") else None
+        good = [item for item in delay_values.values() if isinstance(item, dict) and item.get("ok") and isinstance(item.get("delay"), int)]
+        if good:
+            best = min(good, key=lambda item: item["delay"])
+            current_delay = auto_selected_delay(auto_now, delay_values)
+            tolerance = normalize_non_negative_number(load_groups().get("auto", {}).get("tolerance", 50), 50)
+            decision = auto_alignment_decision(auto_now, current_delay, best["tag"], best["delay"], tolerance)
+            auto_align = {
+                "changed": False,
+                "target": decision["target"],
+                "best": best["tag"],
+                "bestDelay": best["delay"],
+                "current": auto_now,
+                "currentDelay": current_delay,
+                "tolerance": tolerance,
+                "reason": decision["reason"],
+                "threshold": decision.get("threshold"),
+                "wouldSwitch": decision["shouldSwitch"],
+            }
+        else:
+            auto_align = {"changed": False, "target": None, "reason": "no measured delays"}
+    else:
+        auto_align = {"changed": False, "target": None}
     if isinstance(delays, dict):
-        # 页面加载和二次状态刷新不会重新测速，但仍要用最近 history 做一次容差校准，避免 UI 长时间显示旧 Auto.now。
+        # 普通状态刷新只提供诊断，不改变 Auto.now；真正切换只发生在主动测速或保存后的恢复流程。
         delays["autoAlign"] = auto_align
-        if auto_align.get("switch") and not auto_align["switch"].get("ok") and not delays.get("error"):
-            delays["available"] = False
-            delays["error"] = auto_align["switch"].get("error") or "Auto switch failed"
     return {"proxy": get_proxy_state(), "delays": delays}
 
 
@@ -2988,6 +3028,11 @@ def normalize_payload_groups(raw_groups, nodes=None):
             groups["auto"]["url"] = normalize_url(auto.get("url", groups["auto"]["url"]), groups["auto"]["url"])
             groups["auto"]["interval"] = str(auto.get("interval", groups["auto"]["interval"])).strip() or groups["auto"]["interval"]
             groups["auto"]["tolerance"] = normalize_non_negative_number(auto.get("tolerance", groups["auto"]["tolerance"]), 50)
+            preferred = str(auto.get("preferred", groups["auto"].get("preferred", ""))).strip()
+            if preferred in tags:
+                groups["auto"]["preferred"] = preferred
+            else:
+                groups["auto"].pop("preferred", None)
             groups["auto"]["interrupt_exist_connections"] = normalize_bool(
                 auto.get("interrupt_exist_connections", groups["auto"].get("interrupt_exist_connections", True))
             )
@@ -3435,6 +3480,11 @@ class Handler(BaseHTTPRequestHandler):
                 normalized_lists = normalize_payload_lists(payload.get("lists", {}))
                 nodes = normalize_nodes(payload.get("nodes", load_nodes()))
                 groups = normalize_payload_groups(payload.get("groups", load_groups()), nodes=nodes)
+                previous_proxy = get_proxy_state()
+                previous_auto_now = previous_proxy.get("data", {}).get("autoNow") if previous_proxy.get("ok") else None
+                if previous_auto_now in enabled_node_tags(nodes):
+                    groups.setdefault("auto", {})["preferred"] = previous_auto_now
+                previous_delays = get_node_delays(test=False)
                 check = staged_check(normalized_lists, nodes=nodes, groups=groups)
                 if check["code"] != 0:
                     self.send_json(
@@ -3468,6 +3518,11 @@ class Handler(BaseHTTPRequestHandler):
                     )
                     return
                 tproxy_sync = sync_tproxy(nodes=nodes, groups=groups, normalized_lists=normalized_lists)
+                wait_for_proxy_runtime()
+                delays = get_node_delays(test=False)
+                if isinstance(delays, dict):
+                    # 保存配置只负责让 sing-box 使用新容差；不在保存请求里重新测速或强制切 Auto，避免设置保存本身改变当前出站。
+                    delays["previousDelays"] = previous_delays
                 self.send_json(
                     {
                         "saved": result,
@@ -3475,6 +3530,8 @@ class Handler(BaseHTTPRequestHandler):
                         "restart": restart,
                         "rollback": rollback,
                         "tproxySync": tproxy_sync,
+                        "proxy": get_proxy_state(),
+                        "delays": delays,
                         "maintenance": maintenance_status(),
                         "state": load_state(),
                     }
