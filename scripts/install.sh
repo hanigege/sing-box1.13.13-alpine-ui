@@ -417,7 +417,7 @@ enable_services() {
 }
 
 refresh_tproxy_after_start() {
-  python3 "$PROJECT_DIR/scripts/sync_tproxy_setup.py" >/dev/null
+  # 安装阶段已经生成过 TProxy 脚本和 sysctl；这里仅重启确认服务状态，避免新机空刷新留下 .bak 垃圾。
   restart_openrc_service sing-box-tproxy
 }
 

@@ -2515,13 +2515,20 @@ def sync_tproxy(nodes=None, groups=None, normalized_lists=None):
         check = run_command(["bash", "-n", str(script_path)], timeout=8)
         if check["code"] != 0:
             return {"code": 1, "stdout": check["stdout"], "stderr": check["stderr"], "sets": sets}
-        if TPROXY_SCRIPT.exists():
+        script_changed = (not TPROXY_SCRIPT.exists()) or TPROXY_SCRIPT.read_text(encoding="utf-8") != script_path.read_text(encoding="utf-8")
+        sysctl_changed = (not TPROXY_SYSCTL.exists()) or TPROXY_SYSCTL.read_text(encoding="utf-8") != sysctl_path.read_text(encoding="utf-8")
+        if TPROXY_SCRIPT.exists() and script_changed:
+            # 只有真实内容变化才保留现场备份；空同步不能在 /usr/local/sbin 下制造无意义 .bak 垃圾。
             shutil.copy2(TPROXY_SCRIPT, TPROXY_SCRIPT.with_name(f"{TPROXY_SCRIPT.name}.bak.{now_stamp()}"))
-        if TPROXY_SYSCTL.exists():
+        if TPROXY_SYSCTL.exists() and sysctl_changed:
+            # 新装或重复同步时内容相同不备份，避免 /etc/sysctl.d 被安装态刷新留下历史噪音。
             shutil.copy2(TPROXY_SYSCTL, TPROXY_SYSCTL.with_name(f"{TPROXY_SYSCTL.name}.bak.{now_stamp()}"))
-        shutil.copy2(script_path, TPROXY_SCRIPT)
-        TPROXY_SCRIPT.chmod(0o755)
-        shutil.copy2(sysctl_path, TPROXY_SYSCTL)
+        if script_changed:
+            shutil.copy2(script_path, TPROXY_SCRIPT)
+        if TPROXY_SCRIPT.exists():
+            TPROXY_SCRIPT.chmod(0o755)
+        if sysctl_changed:
+            shutil.copy2(sysctl_path, TPROXY_SYSCTL)
     if ENABLE_RADVD and shutil.which("radvd"):
         radvd = sync_radvd(sets["interface"])
     else:
