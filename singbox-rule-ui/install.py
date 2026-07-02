@@ -46,7 +46,19 @@ def ensure_rule_files():
     RULE_DIR.mkdir(parents=True, exist_ok=True)
     for name in TAGS:
         path = RULE_DIR / f"{name}.json"
-        if not path.exists():
+        if path.exists():
+            continue
+        if name == "whitelist":
+            # whitelist 预置常用国内 CDN 域名后缀，避免缺失规则集时走 FakeIP 代理
+            path.write_text(
+                json.dumps(
+                    {"version": 3, "rules": [{"domain_suffix": ["tao.co"]}]},
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        else:
             path.write_text(json.dumps(empty_rule_set(), indent=2) + "\n", encoding="utf-8")
 
 
