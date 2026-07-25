@@ -425,38 +425,64 @@ restart_openrc_service() {
 detect_optimal_mtu() {
   local gw="$1"
   # Probe path MTU to gateway with DF bit (requires iputils ping)
-  # TCP payload = MTU - 40 (20B IP + 20B TCP), ICMP payload = MTU - 28 (20B IP + 8B ICMP)
+  # ICMP payload = MTU - 28 (20B IP + 8B ICMP)
   for mtu in 1500 1492 1464 1440 1400; do
     if ping -c 1 -M do -s "$((mtu - 28))" -W 2 "$gw" >/dev/null 2>&1; then
       echo "$mtu"
       return 0
     fi
   done
-  echo "1500"  # fallback
+  # 探测全部失败(网关不回 ICMP / 防火墙拦截)时返回空串——
+  # 调用方必须把"探测失败"和"探测出 1500"区分开，绝不能拿 1500 当兜底值
+  # 去覆盖用户可能有意配置的 jumbo/overlay MTU。
+  echo ""
 }
 
 ensure_mtu_standard() {
-  local iface current detected mtu_script
+  local iface current detected gw mtu_script
+  # 逃生门：与 sysctl 一致，用户可显式禁止安装器碰 MTU。
+  case "${SING_BOX_SKIP_MTU:-0}" in
+    1|true|TRUE|yes|YES|on|ON)
+      echo "MTU adjustment skipped by SING_BOX_SKIP_MTU."
+      return 0
+      ;;
+  esac
   iface="$(ip -4 route show default 2>/dev/null | awk '/default/ { print $5; exit }')"
   [ -z "$iface" ] && { echo "No default route — skip MTU adjustment."; return 0; }
   current="$(cat "/sys/class/net/$iface/mtu" 2>/dev/null || echo "1500")"
+  gw="$(ip -4 route show default 2>/dev/null | awk '/default/ { print $3; exit }')"
 
   # 用户可通过环境变量 SING_BOX_MTU 强制指定
   if [ -n "${SING_BOX_MTU:-}" ]; then
     detected="$SING_BOX_MTU"
     echo "Using SING_BOX_MTU=$detected (from environment)."
   elif [ "$current" -gt 1500 ]; then
-    # 虚拟接口 MTU 异常高（如 65536），探测路径最优 MTU
-    echo "Detected $iface MTU=$current (unusually high) — probing optimal MTU..."
-    detected="$(detect_optimal_mtu "$(ip -4 route show default | awk '/default/ { print $3; exit }')")"
-  elif command -v ping >/dev/null && ping -c 1 -M do -s 1472 -W 2 "$(ip -4 route show default | awk '/default/ { print $3; exit }')" >/dev/null 2>&1; then
+    # MTU > 1500 可能是管理员有意配置的 jumbo frame / overlay 网络。
+    # 探测确认路径连 1500 都过不了才收紧；探测失败(空串)时保持现状不动手——
+    # 改错 MTU 会断网，这里必须保守。
+    echo "Detected $iface MTU=$current (>1500) — validating path MTU before any change..."
+    if [ -n "$gw" ] && command -v ping >/dev/null && ping -c 1 -M do -s 1472 -W 2 "$gw" >/dev/null 2>&1; then
+      echo "  Path MTU >= 1500 validated; keeping administrator-configured MTU $current."
+      return 0
+    fi
+    detected="$(detect_optimal_mtu "$gw")"
+    if [ -z "$detected" ]; then
+      echo "  WARN: path MTU probe failed (gateway may block ICMP); keeping MTU $current unchanged." >&2
+      echo "  If you know the correct value, set SING_BOX_MTU=<value> and re-run." >&2
+      return 0
+    fi
+  elif command -v ping >/dev/null && [ -n "$gw" ] && ping -c 1 -M do -s 1472 -W 2 "$gw" >/dev/null 2>&1; then
     # 快速检测：1500 能直达网关 → 保持当前 MTU
     echo "$iface MTU $current — path MTU 1500 validated, no change needed."
     return 0
   else
     # 1500 不通 → 路径上有小 MTU 链路（如 PPPoE），自动探测最佳值
     echo "$iface MTU $current — probing path MTU (likely PPPoE)..."
-    detected="$(detect_optimal_mtu "$(ip -4 route show default | awk '/default/ { print $3; exit }')")"
+    detected="$(detect_optimal_mtu "$gw")"
+    if [ -z "$detected" ]; then
+      echo "  WARN: path MTU probe failed; keeping MTU $current unchanged. Set SING_BOX_MTU=<value> to override." >&2
+      return 0
+    fi
   fi
 
   [ "$current" = "$detected" ] && { echo "$iface MTU already $detected — no change needed."; return 0; }
@@ -478,15 +504,105 @@ LOCALEOF
   echo "  Persisted via $mtu_script (local service enabled at boot)."
 }
 
-setup_performance_qdisc() {
-  local iface conf_line_conflict
-  echo "=== TCP 性能优化 (tcp_notsent_lowat + fq qdisc + buffer/fastopen) ==="
+detect_container_env() {
+  # 识别运行环境：LXC/其它容器与 VM/裸机的 sysctl 语义完全不同。
+  # LXC 与宿主机共享内核，容器内写 bbr/buffer 等参数可能只读、可能白写，
+  # 真正生效点在 PVE 宿主机——所以必须区别对待，不能一锅炖硬写。
+  if [ -r /proc/1/environ ] && tr '\0' '\n' < /proc/1/environ 2>/dev/null | grep -q '^container=lxc'; then
+    echo "lxc"
+  elif [ -r /run/systemd/container ] || grep -qs 'lxc\|docker' /proc/1/cgroup 2>/dev/null; then
+    echo "container"
+  else
+    echo "vm"
+  fi
+}
 
-  # sysctl: 性能优化参数 — 无副作用，无条件启用
-  mkdir -p /etc/sysctl.d
-  if [ ! -f /etc/sysctl.d/98-sing-box-performance.conf ]; then
-    cat > /etc/sysctl.d/98-sing-box-performance.conf << 'EOF'
-# sing-box gateway 性能参数
+apply_sysctl_verified() {
+  # 逐条应用并回读验证：成功打 ✓，失败打 ⚠ 并说明——绝不静默吞错，
+  # 避免用户在 LXC 里以为优化生效了、实际半生效的"假省心"。
+  local param key value actual ok=0 fail=0
+  for param in "$@"; do
+    key="${param%% = *}"
+    value="${param#* = }"
+    if sysctl -w "$key=$value" >/dev/null 2>&1; then
+      actual="$(sysctl -n "$key" 2>/dev/null || echo '?')"
+      echo "  ✓ $key = $actual"
+      ok=$((ok + 1))
+    else
+      echo "  ⚠ $key 在当前环境不可写(容器内只读或内核不支持)，跳过."
+      fail=$((fail + 1))
+    fi
+  done
+  echo "  应用结果: 成功 $ok 项，跳过 $fail 项。"
+}
+
+apply_sysctl_conf_verified() {
+  # 按持久化文件逐行应用+验证：运行态与 /etc/sysctl.d 文件保持一致，
+  # 管理员手动改过文件时应用的就是改过的值，不会被安装器的默认值顶掉。
+  local conf="$1" line key value params=()
+  [ -r "$conf" ] || { echo "  ⚠ $conf 不可读，跳过."; return 0; }
+  while IFS= read -r line; do
+    case "$line" in
+      ''|'#'*) continue ;;
+      *=*) ;;
+      *) continue ;;
+    esac
+    key="$(printf '%s' "$line" | cut -d= -f1 | tr -d '[:space:]')"
+    value="$(printf '%s' "$line" | cut -d= -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    # set -e 下不能用裸 && 链(为假时整条语句非零会中止安装器)。
+    if [ -n "$key" ] && [ -n "$value" ]; then
+      params+=("$key = $value")
+    fi
+  done < "$conf"
+  # 注意 set -e：空文件时短路表达式返回非零会中止安装器，必须用显式 if。
+  if [ "${#params[@]}" -gt 0 ]; then
+    apply_sysctl_verified "${params[@]}"
+  fi
+}
+
+print_pve_host_guidance() {
+  cat <<'GUIDE'
+  ────────────────────────────────────────────────────────
+  检测到 LXC 容器环境。容器与宿主机共享内核，BBR/缓冲区等
+  性能参数需要在 Proxmox VE 宿主机上配置才能真正生效。
+  请在 PVE 宿主机执行(只需一次)：
+
+  cat > /etc/sysctl.d/98-pve-lxc-singbox.conf <<'EOF'
+  net.core.default_qdisc = fq
+  net.ipv4.tcp_congestion_control = bbr
+  net.ipv4.tcp_slow_start_after_idle = 0
+  net.ipv4.tcp_notsent_lowat = 16384
+  net.ipv4.tcp_rmem = 4096 131072 67108864
+  net.ipv4.tcp_wmem = 4096 65536 67108864
+  net.core.rmem_max = 67108864
+  net.core.wmem_max = 67108864
+  net.core.somaxconn = 16384
+  net.ipv4.tcp_max_syn_backlog = 8192
+  EOF
+  sysctl -p /etc/sysctl.d/98-pve-lxc-singbox.conf
+  ────────────────────────────────────────────────────────
+GUIDE
+}
+
+setup_performance_qdisc() {
+  local iface env_type
+  # 逃生门：不想让安装器碰内核参数的用户可显式跳过。
+  case "${SING_BOX_SKIP_SYSCTL:-0}" in
+    1|true|TRUE|yes|YES|on|ON)
+      echo "=== TCP 性能优化: 已按 SING_BOX_SKIP_SYSCTL 跳过 ==="
+      return 0
+      ;;
+  esac
+  env_type="$(detect_container_env)"
+  echo "=== TCP 性能优化 (环境: $env_type) ==="
+
+  if [ "$env_type" = "vm" ]; then
+    # VM/裸机：独立内核，全套参数安全生效(生产验证过的组合)。
+    # 文件已存在时不重写——尊重管理员对该文件的手动修改(覆盖安装不重置)。
+    mkdir -p /etc/sysctl.d
+    if [ ! -f /etc/sysctl.d/98-sing-box-performance.conf ]; then
+      cat > /etc/sysctl.d/98-sing-box-performance.conf << 'EOF'
+# sing-box gateway 性能参数 (由安装器写入; SING_BOX_SKIP_SYSCTL=1 可跳过)
 net.ipv4.tcp_congestion_control = bbr
 net.ipv4.tcp_rmem = 4096 131072 67108864
 net.ipv4.tcp_wmem = 4096 65536 67108864
@@ -497,46 +613,33 @@ net.core.wmem_max = 67108864
 net.ipv4.tcp_fastopen = 3
 net.ipv4.tcp_mtu_probing = 1
 EOF
-    echo "  sysctl 性能配置已写入."
-  fi
-  # 检查是否因上次失败的 sysctl 写入了不完整的行
-  conf_line_conflict=$(grep -cs '^net.core.default_qdisc' /etc/sysctl.d/98-sing-box-performance.conf || true)
-  if [ "$conf_line_conflict" -gt 0 ]; then
-    # 移除可能不支持的 default_qdisc（Alpine 某些内核不支持）
-    sed -i '/^net.core.default_qdisc/d' /etc/sysctl.d/98-sing-box-performance.conf
-    echo "  清理了不兼容的 default_qdisc 配置行."
-  fi
-  # 幂等补充：确保所有优化参数都存在（覆盖旧安装残留的 131072）
-  for param in \
-    "net.ipv4.tcp_notsent_lowat = 16384" \
-    "net.core.rmem_max = 67108864" \
-    "net.core.wmem_max = 67108864" \
-    "net.ipv4.tcp_fastopen = 3" \
-    "net.ipv4.tcp_mtu_probing = 1"; do
-    key="${param%% = *}"
-    if grep -qs "^$key" /etc/sysctl.d/98-sing-box-performance.conf; then
-      # 如果已存在但值不同（旧安装 131072），用 sed 更新
-      if ! grep -qs "^$param" /etc/sysctl.d/98-sing-box-performance.conf; then
-        sed -i "s/^$key =.*/$param/" /etc/sysctl.d/98-sing-box-performance.conf
-        echo "  $key 已更新为 ${param#*= }."
-      fi
+      echo "  sysctl 性能配置已写入 /etc/sysctl.d/98-sing-box-performance.conf"
     else
-      echo "$param" >> /etc/sysctl.d/98-sing-box-performance.conf
-      echo "  $param 已写入."
+      echo "  /etc/sysctl.d/98-sing-box-performance.conf 已存在，保留现有内容(不覆盖手动修改)."
     fi
-  done
-  sysctl -p /etc/sysctl.d/98-sing-box-performance.conf 2>/dev/null || \
-    sysctl -e -p /etc/sysctl.d/98-sing-box-performance.conf 2>/dev/null || true
-  echo "  当前 tcp_notsent_lowat=$(sysctl -n net.ipv4.tcp_notsent_lowat 2>/dev/null || echo 'N/A')"
+    # 运行态按持久化文件逐条应用+回读验证，✓/⚠ 逐条打印，不静默吞错。
+    apply_sysctl_conf_verified /etc/sysctl.d/98-sing-box-performance.conf
+  else
+    # LXC/容器：只尝试容器内通常可写、且不依赖宿主机模块加载状态的参数。
+    # bbr/大缓冲这类共享内核参数不在容器内强写(写了也未必生效，还会误导)，
+    # 统一改为提示用户在宿主机配置。也不写 sysctl.d 持久化文件——
+    # 开机时容器内 sysctl 服务对只读键报错会制造噪声。
+    apply_sysctl_verified \
+      "net.ipv4.tcp_notsent_lowat = 16384" \
+      "net.ipv4.tcp_fastopen = 3" \
+      "net.ipv4.tcp_mtu_probing = 1"
+    print_pve_host_guidance
+  fi
 
-  # tc qdisc: fq — 条件启用，需要内核支持
+  # tc qdisc: fq — 条件启用，需要内核支持(容器内一般不可用，探测失败自动跳过)
   iface="$(ip -4 route show default 2>/dev/null | awk '/default/ { print $5; exit }')"
   if [ -z "$iface" ]; then
     echo "  ⚠ 未检测到 IPv4 默认路由，跳过 fq qdisc 配置."
     return 0
   fi
-  if tc qdisc show dev "$iface" 2>/dev/null | grep -q 'fq'; then
-    echo "  fq qdisc 已在 $iface 上生效，跳过."
+  if tc qdisc show dev "$iface" 2>/dev/null | grep -qE 'qdisc (fq|cake|htb|hfsc|tbf) '; then
+    # fq 已生效，或管理员配置了自定义流控(cake/htb 等)——绝不覆盖用户的 qdisc 策略。
+    echo "  qdisc 已配置 ($(tc qdisc show dev "$iface" 2>/dev/null | head -1 | awk '{print $2}'))，不改动."
   elif tc qdisc replace dev "$iface" root fq 2>/dev/null; then
     echo "  ✓ fq qdisc 已附加到 $iface"
     # 持久化
@@ -551,7 +654,7 @@ LOCALEOF
     rc-update add local boot 2>/dev/null || true
     echo "  已持久化到 $lscript"
   else
-    echo "  ⚠ 内核不支持 fq qdisc，跳过 (BBR 使用软件 pacing)."
+    echo "  ⚠ 当前环境不支持配置 fq qdisc，跳过 (BBR 使用软件 pacing)."
   fi
 }
 

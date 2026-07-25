@@ -33,12 +33,17 @@ download_first() {
   for url in "$@"; do
     [ -n "$url" ] || continue
     echo "尝试下载: $url"
+    # 每个 URL 先 curl 后 wget 双试：curl 存在但因 TLS/ca-certificates 等原因
+    # 全部镜像失败时，仍能回落到 busybox wget(不同实现，可能成功)。
     if command -v curl >/dev/null 2>&1; then
       if curl -fL --connect-timeout 10 --max-time 120 "$url" -o "$output"; then
         return 0
       fi
-    elif wget -T 120 -O "$output" "$url"; then
-      return 0
+    fi
+    if command -v wget >/dev/null 2>&1; then
+      if wget -T 120 -O "$output" "$url"; then
+        return 0
+      fi
     fi
   done
   return 1

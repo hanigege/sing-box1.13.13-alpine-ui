@@ -121,7 +121,19 @@ remove_generated_radvd_files() {
 remove_sing_box_binary_if_owned() {
   owner="$(state_value sing_box_binary "$INSTALL_STATE_FILE")"
   if [ "$owner" = "installed" ] || { [ "$owner" = "" ] && [ "$PURGE" = "1" ]; }; then
+    # 本安装器新增的二进制：删除。
     rm -f /usr/local/bin/sing-box
+  elif [ "$owner" = "replaced" ]; then
+    # 安装器覆盖过用户原有二进制：优先恢复备份，让系统回到安装前状态。
+    backup="$(state_value sing_box_binary_backup "$INSTALL_STATE_FILE")"
+    if [ -n "$backup" ] && [ -f "$backup" ]; then
+      if cp -a "$backup" /usr/local/bin/sing-box; then
+        rm -f "$backup"
+        echo "Restored original sing-box from $backup"
+      fi
+    else
+      echo "WARN: original sing-box backup not found (state=replaced); leaving current binary in place." >&2
+    fi
   fi
 }
 
@@ -205,7 +217,12 @@ main() {
     /usr/local/bin/sing-box-gateway-info \
     /usr/local/bin/sing-box-gateway-uninstall \
     "$LOGROTATE_CONFIG" \
-    /etc/sysctl.d/99-sing-box-tproxy.conf
+    /etc/sysctl.d/99-sing-box-tproxy.conf \
+    /etc/sysctl.d/98-sing-box-performance.conf \
+    /etc/local.d/singbox-qdisc.start
+  # MTU 持久化脚本名带网卡名(set-mtu-<iface>.start)，用通配清理，避免残留脚本
+  # 在网卡改名/换网后把新环境 MTU 设错。
+  rm -f /etc/local.d/set-mtu-*.start
 
   remove_generated_radvd_files
   rm -rf "$INSTALL_DIR" "$LOG_DIR"

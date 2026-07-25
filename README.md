@@ -15,7 +15,8 @@
 - Telegram 官方 IP 捕获列表支持在线更新和手动校验编辑
 - LAN 侧 DNS 指向本机时，sing-box 监听 53 端口处理 DNS 查询，降低 IPv4/IPv6 明文 DNS 泄漏
 - 安装器默认不改 `/etc/resolv.conf`，不把宿主机 DNS 指向本机，不启用 `radvd`
-- 安装器默认不调整 TCP/UDP 性能 sysctl，内核调参由管理员按实际链路手动决定
+- 性能调优自动识别环境：VM/裸机写入完整 TCP 优化(BBR/缓冲区/fastopen)；LXC 容器只应用容器内可写参数并打印 PVE 宿主机配置指南；`SING_BOX_SKIP_SYSCTL=1` 可完全跳过
+- 覆盖安装自动保留用户已有节点、分组、UI token 和 Clash secret，只重新渲染运行配置
 - 规则更新由 Alpine `crond` 管理，运行状态自愈每 2 分钟检查一次
 - `sing-box-gateway-info` 一键查看 9091 访问地址和 Rule UI token
 
@@ -279,9 +280,16 @@ sysctl net.ipv4.ip_nonlocal_bind net.ipv4.conf.all.rp_filter
 
 ## 通用性能参数
 
-安装器默认不写入 TCP/UDP 性能 sysctl，也不会启用 BBR 或修改缓冲参数。不同 VPS、LXC、PVE 和家庭宽带链路对内核参数的反应差异很大，自动捆绑调参可能让部分环境变慢。
+安装器会自动识别运行环境并做相应的 TCP 性能调优,目标是"装完即优化,且不写无效参数":
 
-如果确实需要调整 `tcp_congestion_control`、`tcp_rmem`、`tcp_wmem`、`udp_rmem_min` 或 `tcp_slow_start_after_idle`，建议先手动测试当前节点和链路，再自行写入 `/etc/sysctl.d/*.conf`。仓库的安装、覆盖安装和运行态自愈不会改动这些参数。
+- **VM / 裸机**(独立内核):写入 `/etc/sysctl.d/98-sing-box-performance.conf`,包含 BBR 拥塞控制、64MB TCP 缓冲区(匹配高延迟大带宽跨境链路的 BDP)、`tcp_fastopen`、`tcp_mtu_probing`、`tcp_notsent_lowat`,并在默认网卡附加 `fq` qdisc(BBR pacing 需要)。每项参数写入后回读验证,✓/⚠ 逐条打印。
+- **LXC / 容器**(与宿主机共享内核):只应用容器内可写且确定有效的参数(`tcp_notsent_lowat`、`tcp_fastopen`、`tcp_mtu_probing`),**不写** BBR/缓冲区(容器内写了也未必生效,真正生效点在宿主机),安装结尾打印一段可直接复制的 PVE 宿主机 sysctl 配置指南(见上方"Proxmox VE / LXC 可选优化")。
+- **已有自定义 qdisc**(cake/htb/hfsc/tbf 等流控策略):安装器检测到即不改动,不会覆盖管理员的限速/整形配置。
+- **完全跳过**:`SING_BOX_SKIP_SYSCTL=1` 跳过全部 sysctl/qdisc 调优;`SING_BOX_SKIP_MTU=1` 跳过 MTU 自动探测;`SING_BOX_MTU=<值>` 强制指定 MTU。
+
+MTU 自动探测采取保守策略:路径探测失败(如网关不回 ICMP)时**保持现状不改动**,只提示手动指定;MTU>1500 的 jumbo/overlay 配置在路径验证通过时同样保留。
+
+如果需要进一步手动调整 `tcp_rmem`、`tcp_wmem`、`udp_rmem_min` 等,可修改 `/etc/sysctl.d/98-sing-box-performance.conf` 后执行 `sysctl -p /etc/sysctl.d/98-sing-box-performance.conf`;覆盖安装不会重置你的手动修改(仅在文件不存在时生成)。
 
 ## 访问入口
 
