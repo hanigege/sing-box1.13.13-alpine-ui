@@ -151,13 +151,26 @@ choose_sing_box_runtime() {
 }
 
 install_sing_box() {
-  local arch singbox_dir binary tmp current_version backup
+  local arch singbox_dir binary tmp current_version backup sums
   arch="$(detect_arch)"
   singbox_dir="$PROJECT_DIR/third_party/sing-box/v${SING_BOX_BUNDLED_VERSION}"
   binary="$singbox_dir/sing-box-ref1nd-linux-${arch}"
   if [ ! -r "$binary" ]; then
     echo "Bundled reF1nd sing-box binary not found: $binary" >&2
     exit 1
+  fi
+  # 完整性校验：quick-install 通过第三方 gh 镜像下载 tar.gz，二进制可能被
+  # 截断或篡改。仓库内随附 SHA256SUMS，不匹配就拒装(宁可装不上也不装坏的)。
+  sums="$singbox_dir/SHA256SUMS"
+  if [ -r "$sums" ]; then
+    if ! (cd "$singbox_dir" && sha256sum -c SHA256SUMS >/dev/null 2>&1); then
+      echo "ERROR: bundled sing-box binary failed sha256 verification (corrupted download or tampered mirror)." >&2
+      echo "       Re-run the installer, or try a different proxy: quick-install-proxy.sh" >&2
+      exit 1
+    fi
+    echo "sing-box binary sha256 verified."
+  else
+    echo "WARN: $sums missing; skipping binary integrity verification." >&2
   fi
   tmp="$(mktemp -d)"
   trap "rm -rf '$tmp'" EXIT

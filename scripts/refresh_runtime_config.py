@@ -57,15 +57,20 @@ def preferred_ipv6_listener(lan_ip):
         if expected and expected in addresses:
             return str(expected)
 
+    # 与 app.py 的同名函数保持一致：只在私有(ULA)地址上监听 53 端口 DNS。
+    # GUA 可被公网直接路由，绑上去等于开放解析器；没有 ULA 时返回空串，
+    # 上层会移除 dns-in-v6 入站，不提供 IPv6 DNS 也不裸奔。
+    private_addresses = [address for address in addresses if address.is_private]
+    if not private_addresses:
+        return ""
+
     def score(address):
         text = str(address)
-        if address.is_private and "ff:fe" not in text:
+        if "ff:fe" not in text:
             return 0
-        if address.is_private:
-            return 1
-        return 2
+        return 1
 
-    return str(sorted(addresses, key=score)[0])
+    return str(sorted(private_addresses, key=score)[0])
 
 
 def remove_inbound_tag(config, tag):

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import fcntl
 import ipaddress
 import json
 import os
@@ -15,6 +16,7 @@ SING_BOX_BIN = Path(os.environ.get("RULE_UI_SING_BOX_BIN", "/usr/local/bin/sing-
 SING_BOX_SERVICE = os.environ.get("RULE_UI_SING_BOX_SERVICE", "sing-box")
 TPROXY_SERVICE = os.environ.get("RULE_UI_TPROXY_SERVICE", "sing-box-tproxy")
 UI_SERVICE = os.environ.get("RULE_UI_SERVICE", "singbox-rule-ui")
+LOCK_PATH = Path(os.environ.get("RULE_UI_MONITOR_LOCK", "/run/monitor-sing-box-runtime.lock"))
 
 
 def run(command, timeout=30):
@@ -84,6 +86,16 @@ def restart_service(name):
 def main():
     started = time.strftime("%Y-%m-%d %H:%M:%S")
     actions = []
+    # 单实例锁：cron 每 2 分钟触发一次，若上一轮 monitor 仍在跑(如镜像慢、
+    # 服务重启卡住)，并发的第二个实例会与第一个同时 refresh/restart 造成
+    # 服务反复重启抖动。拿不到锁直接安静退出，等下一个周期。
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    lock_handle = open(LOCK_PATH, "w", encoding="utf-8")
+    try:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print(json.dumps({"startedAt": started, "skipped": "another monitor run is still in progress"}, ensure_ascii=False))
+        return 0
     sys.path.insert(0, str(APP_DIR))
     import app
 
