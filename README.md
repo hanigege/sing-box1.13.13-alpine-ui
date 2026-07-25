@@ -5,7 +5,7 @@
 ## 功能
 
 - 一键安装 `sing-box` 二进制、OpenRC 服务、TProxy、crond 定时任务和 Web UI
-- 默认使用仓库内置并校验过的 Alpine/musl 静态构建版 `sing-box 1.13.14`，包含 `amd64` 和 `arm64`
+- 默认使用仓库内置并校验过的 reF1nd 增强版 `sing-box v1.14.0-alpha.48-reF1nd` 静态二进制（`amd64`）
 - 9091 规则 UI 管理白名单、黑名单、灰名单、DDNS、代理节点、实时连接、日志和运行规则
 - 保存前执行 `sing-box check`，失败不覆盖正式配置；规则和主配置使用原子替换
 - 重启失败自动回滚上一份可用配置，优先保证正在运行的 `sing-box` 可恢复
@@ -19,6 +19,7 @@
 - 覆盖安装自动保留用户已有节点、分组、UI token 和 Clash secret，只重新渲染运行配置
 - 规则更新由 Alpine `crond` 管理，运行状态自愈每 2 分钟检查一次
 - `sing-box-gateway-info` 一键查看 9091 访问地址和 Rule UI token
+- 登录密码可自定义：安装时 `RULE_UI_TOKEN` 指定初始密码，装好后也能在 UI 维护页随时修改（至少 6 位，不含空格）
 
 ## 支持系统
 
@@ -46,6 +47,22 @@ curl -fsSL https://raw.githubusercontent.com/hanigege/singbox-ui-alpine/main/scr
 # 和直连回退（压缩包下载和分流规则更新均有多镜像兜底）。
 curl -fsSL https://ghproxy.net/https://raw.githubusercontent.com/hanigege/singbox-ui-alpine/main/scripts/quick-install-proxy.sh | sh
 ```
+
+### 自定义 UI 登录密码（可选）
+
+默认随机生成 43 位 token，不好记。安装时用 `RULE_UI_TOKEN` 指定自己的密码（至少 6 位、不含空格），注意变量要放在 `sh` 之前才能穿透管道：
+
+```sh
+# 直连入口 + 自定义密码（把 mypass6 换成你自己的密码）
+curl -fsSL https://raw.githubusercontent.com/hanigege/singbox-ui-alpine/main/scripts/quick-install.sh | RULE_UI_TOKEN=mypass6 sh
+```
+
+```sh
+# 反代入口 + 自定义密码
+curl -fsSL https://ghproxy.net/https://raw.githubusercontent.com/hanigege/singbox-ui-alpine/main/scripts/quick-install-proxy.sh | RULE_UI_TOKEN=mypass6 sh
+```
+
+密码不合规（少于 6 位或含空格）时自动回退为随机 token 并打印告警。已装好的机器不需要重装：直接登录 9091 → 维护页 → 「修改访问密码」即可随时更换；覆盖安装永远不会重置现有密码。
 
 安装器自动安装 Alpine 依赖：`bash`、`curl`、`ca-certificates`、`tar`、`gzip`、`python3`、`nftables`、`iproute2`、`rsync`、`util-linux`、`coreutils`、`openrc`。仓库内置的 `sing-box` 是 reF1nd 增强版 `v1.14.0-alpha.48-reF1nd` 静态二进制，不再需要 `gcompat`。卸载时默认保留 apk 包，避免连带移除系统基础依赖。
 
@@ -307,6 +324,8 @@ http://<网关IP>:9091/
 
 9090 Clash API 保留给 9091 后端读取连接、日志和运行规则；浏览器日常管理只需要进入 9091，并使用 Rule UI token 登录。
 
+觉得随机 token 难记？登录后在 **维护页 → 修改访问密码** 设置自己的密码（至少 6 位、不含空格），改完当前浏览器自动续用新密码，其它设备用新密码重新登录即可。
+
 ## 一键卸载
 
 已安装机器优先使用本地卸载器：
@@ -340,6 +359,12 @@ apk add --no-cache bash curl ca-certificates
 git clone https://github.com/hanigege/singbox-ui-alpine.git
 cd singbox-ui-alpine
 bash scripts/install.sh
+```
+
+Git 安装同样支持自定义 UI 登录密码：
+
+```bash
+RULE_UI_TOKEN=mypass6 bash scripts/install.sh
 ```
 
 本地卸载（交互式确认，静默模式加 `--yes`）：
