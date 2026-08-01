@@ -693,6 +693,28 @@ button[data-i18n="updateRules"] {
 .node-title {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.node-title strong {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  word-break: break-all;
+  line-height: 1.3;
+}
+
+.node-title > span {
+  font-size: 12px;
+  color: var(--muted);
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+  max-width: 100%;
 }
 
 .node-title h4 {
@@ -1300,34 +1322,67 @@ button[data-i18n="updateRules"] {
 
   /* 节点表单 */
   .node-form {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
   }
 
-  .node-form input[placeholder*="tag"],
-  .node-form input[placeholder*="server"],
-  .node-form input[placeholder*="password"],
-  .node-form input[placeholder*="uuid"],
-  .node-form input[placeholder*="tls"],
-  .node-form input[placeholder*="obfs"],
-  .node-form input[placeholder*="reality"],
-  .node-form input[placeholder*="short_id"] {
+  .node-form input,
+  .node-form select,
+  .node-form button {
     grid-column: 1 / -1;
+    width: 100%;
+    min-width: 0;
   }
 
   /* 节点卡片 */
   .node-card {
     flex-wrap: wrap;
     padding: 12px 14px;
+    gap: 8px;
   }
 
   .node-title {
     flex: 1 1 100%;
-    margin-bottom: 8px;
+    margin-bottom: 4px;
+    min-width: 0;
+  }
+
+  .node-title > span {
+    white-space: normal;
+    word-break: break-all;
+    overflow: visible;
+    text-overflow: clip;
   }
 
   .node-title p {
     white-space: normal;
     word-break: break-all;
+  }
+
+  .node-actions,
+  .node-primary-actions {
+    flex: 1 1 100%;
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .node-actions button,
+  .node-primary-actions button {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .node-badges {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .node-pill {
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /* 规则行 */
