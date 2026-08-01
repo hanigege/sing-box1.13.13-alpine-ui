@@ -1,6 +1,4 @@
-# **醒目说明：官方sing-box1.13.14-alpine-ui 在分支里
-
-# 下面是sing-box-reF1nd魔改版
+# sing-box-alpine-ui（reF1nd 魔改版）
 
 ## 功能
 
@@ -26,8 +24,7 @@
 当前安装器只面向 Alpine Linux + OpenRC：
 
 - Alpine 3.19+
-- `x86_64/amd64`
-- `aarch64/arm64`
+- `x86_64/amd64`（reF1nd 魔改版二进制仅提供 amd64）
 
 需要 root 权限。不要在 Debian/Ubuntu 上使用这个仓库；Debian/Ubuntu 请继续用原 systemd 版本。
 
