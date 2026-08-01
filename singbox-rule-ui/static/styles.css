@@ -832,8 +832,8 @@ button[data-i18n="updateRules"] {
 }
 
 .maintenance-rows {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -848,6 +848,13 @@ button[data-i18n="updateRules"] {
   padding: 14px 16px;
 }
 
+.maintenance-card h3,
+.maintenance-overview-card h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
 .maintenance-card h4,
 .runtime-card h4,
 .runtime-rule-card h4 {
@@ -858,7 +865,7 @@ button[data-i18n="updateRules"] {
 
 .maintenance-overview-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 10px;
 }
 
@@ -867,9 +874,11 @@ button[data-i18n="updateRules"] {
   border: 1px solid var(--line);
   border-radius: var(--radius-m);
   padding: 12px;
+  min-width: 0;
 }
 
 .maintenance-overview-tile .label {
+  display: block;
   font-size: 11px;
   color: var(--muted);
   text-transform: uppercase;
@@ -877,10 +886,16 @@ button[data-i18n="updateRules"] {
   margin-bottom: 4px;
 }
 
-.maintenance-overview-tile .value {
-  font-size: 16px;
+.maintenance-overview-tile .value,
+.maintenance-overview-tile strong {
+  display: block;
+  font-size: 15px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  line-height: 1.35;
+  white-space: normal;
 }
 
 .maintenance-summary-title {
@@ -1061,32 +1076,88 @@ button[data-i18n="updateRules"] {
   padding: 16px 20px;
   margin-bottom: 16px;
   box-shadow: var(--shadow-s);
+  border-left: 4px solid var(--line-strong);
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
 
-.health-summary-banner.ok {
-  border-left: 4px solid var(--ok);
+.health-summary-banner.ok,
+.health-summary-banner.good {
+  border-left-color: var(--ok);
 }
 
 .health-summary-banner.warn {
-  border-left: 4px solid var(--warn);
+  border-left-color: var(--warn);
 }
 
 .health-summary-banner.danger {
-  border-left: 4px solid var(--danger);
+  border-left-color: var(--danger);
+}
+
+.health-summary-marker {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 700;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.health-summary-banner.ok .health-summary-marker,
+.health-summary-banner.good .health-summary-marker {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.health-summary-banner.ok .health-summary-marker::before,
+.health-summary-banner.good .health-summary-marker::before {
+  content: "✓";
+}
+
+.health-summary-banner.warn .health-summary-marker {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.health-summary-banner.warn .health-summary-marker::before {
+  content: "!";
+}
+
+.health-summary-banner.danger .health-summary-marker {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.health-summary-banner.danger .health-summary-marker::before {
+  content: "×";
+}
+
+.health-summary-banner > div {
+  flex: 1;
+  min-width: 0;
 }
 
 .health-summary-label {
+  display: block;
   font-size: 12px;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.4px;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
-.health-summary-marker {
-  font-size: 16px;
+.health-summary-banner strong {
+  display: block;
+  font-size: 17px;
   font-weight: 600;
-  margin-bottom: 4px;
+  letter-spacing: -0.2px;
+  margin-bottom: 2px;
 }
 
 .health-summary-tier-note {
@@ -1155,14 +1226,78 @@ button[data-i18n="updateRules"] {
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: var(--radius-m);
-  padding: 14px;
+  padding: 14px 16px;
   margin-bottom: 12px;
+}
+
+.rule-schedule-panel h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.rule-schedule-panel > div > p {
+  margin: 0 0 14px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
 }
 
 .rule-schedule-form {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 10px;
+  gap: 12px;
+  align-items: end;
+}
+
+.rule-schedule-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  min-width: 0;
+}
+
+.rule-schedule-form label span {
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.rule-schedule-form input,
+.rule-schedule-form select {
+  padding: 9px 12px;
+  font-size: 15px;
+  width: 100%;
+  min-width: 0;
+}
+
+.rule-schedule-form button {
+  padding: 10px 18px;
+  border-radius: var(--radius-m);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+  font-size: 14px;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  box-shadow: var(--shadow-s);
+}
+
+.rule-schedule-form button:hover:not(:disabled) {
+  background: #0066d6;
+}
+
+.rule-schedule-form button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.rule-schedule-form button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .switchline {
