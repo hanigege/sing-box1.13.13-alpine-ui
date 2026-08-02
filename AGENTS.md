@@ -90,13 +90,10 @@ sh -n \
 
 ---
 
-## 三个 GitHub 仓库区分
+## GitHub 仓库
 
 | 仓库 | 本地路径 | 说明 |
 |------|---------|------|
-| `hanigege/singbox-ui-alpine` | `~/codex/sb-alpine` | 当前工作仓库（sb-alpine）。Alpine OpenRC 环境，sing-box reF1nd 网关 + Rule UI。生产部署在 10.20.20.6 和 10.20.20.16。 |
-| `hanigege/sing-box1.14x-gateway-ui` | `/Users/mana/Documents/codex/sing-box1.14x-gateway-ui` | sing-box 1.14.x 网关 + Rule UI。代码结构和 alpine-ui 基本一致。 |
-| `hanigege/sing-box1.13.13-gateway-ui` | `/Users/mana/Documents/codex/sing-box1.13.13-gateway-ui` | 另一个 sing-box 1.13.13 网关仓库。代码结构和前两个一致。 |
+| `hanigege/singbox-ui-alpine` | `~/codex/sb-alpine` | 当前唯一维护仓库（sb-alpine）。Alpine OpenRC 环境，sing-box reF1nd 网关 + Rule UI。生产部署在 10.20.20.6 和 10.20.20.16。 |
 
-前端的 textarea 批量编辑改造三个仓库已同步（2026-06-24）。
-修改前端静态文件（index.html、styles.css、app.js）时，如果需要同步到其他仓库，三个路径分别改。
+`sing-box1.14x-gateway-ui` 与 `sing-box1.13.13-gateway-ui` 两个仓库已于 2026-08 删除，不再维护，前端改动无需再同步。

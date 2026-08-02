@@ -39,10 +39,10 @@ curl -fsSL https://raw.githubusercontent.com/hanigege/singbox-ui-alpine/main/scr
 ```
 
 ```sh
-# 入口二：ghproxy.net 反代（境内或 GitHub 直连不稳定的机器）
-# 脚本内置 ghproxy.net、gh-proxy.com、gh.llkk.cc 多级镜像加速
+# 入口二：gh-proxy.com 反代（境内或 GitHub 直连不稳定的机器）
+# 脚本内置 gh-proxy.com、ghproxy.net 多级镜像加速
 # 和直连回退（压缩包下载和分流规则更新均有多镜像兜底）。
-curl -fsSL https://ghproxy.net/https://raw.githubusercontent.com/hanigege/singbox-ui-alpine/main/scripts/quick-install-proxy.sh | sh
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/hanigege/singbox-ui-alpine/main/scripts/quick-install-proxy.sh | sh
 ```
 
 ### 自定义 UI 登录密码（可选）
@@ -56,7 +56,7 @@ curl -fsSL https://raw.githubusercontent.com/hanigege/singbox-ui-alpine/main/scr
 
 ```sh
 # 反代入口 + 自定义密码
-curl -fsSL https://ghproxy.net/https://raw.githubusercontent.com/hanigege/singbox-ui-alpine/main/scripts/quick-install-proxy.sh | RULE_UI_TOKEN=mypass6 sh
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/hanigege/singbox-ui-alpine/main/scripts/quick-install-proxy.sh | RULE_UI_TOKEN=mypass6 sh
 ```
 
 密码不合规（少于 6 位或含空格）时自动回退为随机 token 并打印告警。已装好的机器不需要重装：直接登录 9091 → 维护页 → 「修改访问密码」即可随时更换；覆盖安装永远不会重置现有密码。
