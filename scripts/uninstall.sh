@@ -220,6 +220,10 @@ main() {
     /etc/sysctl.d/99-sing-box-tproxy.conf \
     /etc/sysctl.d/98-sing-box-performance.conf \
     /etc/local.d/singbox-qdisc.start
+  # ntpd 的国内 NTP 源配置由安装器写入；卸载时移除并重启，让 ntpd 回到
+  # busybox 默认源（不停用 ntpd 本身，避免卸载后系统时钟无人校准）。
+  rm -f /etc/conf.d/ntpd
+  rc-service ntpd restart >/dev/null 2>&1 || true
   # MTU 持久化脚本名带网卡名(set-mtu-<iface>.start)，用通配清理，避免残留脚本
   # 在网卡改名/换网后把新环境 MTU 设错。
   rm -f /etc/local.d/set-mtu-*.start

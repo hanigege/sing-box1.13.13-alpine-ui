@@ -17,7 +17,7 @@ RULE_UPDATE_CRON_MARKER_BEGIN="# BEGIN sing-box-gateway-ui rule update"
 RULE_UPDATE_CRON_MARKER_END="# END sing-box-gateway-ui rule update"
 MONITOR_CRON_MARKER_BEGIN="# BEGIN sing-box-gateway-ui runtime monitor"
 MONITOR_CRON_MARKER_END="# END sing-box-gateway-ui runtime monitor"
-APK_PACKAGES=(bash curl ca-certificates tar gzip python3 nftables iproute2 rsync util-linux coreutils openrc logrotate gcompat iputils)
+APK_PACKAGES=(bash curl ca-certificates tar gzip python3 nftables iproute2 rsync util-linux coreutils openrc logrotate gcompat iputils busybox-openrc)
 
 need_root() {
   if [ "$(id -u)" -ne 0 ]; then
@@ -404,7 +404,40 @@ install_cron_jobs() {
   rc-service crond restart >/dev/null 2>&1 || rc-service crond start >/dev/null 2>&1 || true
 }
 
+setup_ntp_china() {
+  # 时区固定为北京时间(Asia/Shanghai)：网关面向国内用户，日志时间戳与
+  # 用户本地时间一致才便于排障；tzdata 缺失时不阻断安装，仅告警。
+  if [ -f /usr/share/zoneinfo/Asia/Shanghai ]; then
+    ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+    echo "Asia/Shanghai" > /etc/timezone
+  else
+    apk add --no-cache tzdata >/dev/null 2>&1 || true
+    if [ -f /usr/share/zoneinfo/Asia/Shanghai ]; then
+      ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+      echo "Asia/Shanghai" > /etc/timezone
+    else
+      echo "WARN: tzdata 不可用，时区保持系统默认" >&2
+    fi
+  fi
+  # NTP 上游用国内源：境内访问默认的 pool.ntp.org 常有丢包/高延迟，
+  # 而 AEAD-2022 要求时钟精度在 30 秒内，源不稳会让节点间歇性失效。
+  # 多写几个源，busybox ntpd 会自行择优。
+  if [ ! -f /etc/conf.d/ntpd ] || ! grep -q "aliyun" /etc/conf.d/ntpd 2>/dev/null; then
+    cat > /etc/conf.d/ntpd <<'NTPCONF'
+# busybox ntpd 配置（sing-box 网关，国内 NTP 源）
+NTPD_OPTS="-N -p ntp.aliyun.com -p ntp1.aliyun.com -p time1.cloud.tencent.com -p cn.pool.ntp.org"
+NTPCONF
+  fi
+}
+
 enable_services() {
+  # NTP 时钟同步：Alpine 自带 busybox ntpd 但默认不启用。
+  # Shadowsocks AEAD-2022(2022-blake3-*) 有防重放保护，客户端与服务端时间差
+  # 超过 30 秒会被服务端直接拒连(日志: invalid timestamp)，表现为节点"能连但 0 B/s"。
+  # 网关时钟一旦漂移，所有 2022 加密节点集体失效，故安装时必须拉起 ntpd 并设开机自启。
+  setup_ntp_china
+  rc-update add ntpd default >/dev/null 2>&1 || true
+  rc-service ntpd start >/dev/null 2>&1 || true
   rc-update add sing-box-tproxy default >/dev/null 2>&1 || true
   rc-update add sing-box default >/dev/null 2>&1 || true
   rc-update add singbox-rule-ui default >/dev/null 2>&1 || true
