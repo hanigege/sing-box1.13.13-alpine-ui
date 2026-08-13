@@ -37,6 +37,38 @@ require_alpine() {
   fi
 }
 
+# 检测「内核已升级但未重启」：apk 升级 linux-virt/linux-lts 后旧内核的
+# /lib/modules/<旧版本> 目录会被清理，运行中的旧内核没有 nf_tables 模块，
+# nft 会报 src/mnl.c: Unable to initialize Netlink socket: Protocol not supported，
+# TProxy 必然起不来。预检只提示不阻断（覆盖安装/已有规则场景仍可继续），
+# 但新装用户会看到明确中文指引先 reboot 再跑。
+check_kernel_reboot_needed() {
+  # LXC 容器与宿主机共享内核，/lib/modules 在容器内通常为空，跳过。
+  # environ 是 NUL 分隔的二进制文件，用 grep -a 按文本匹配子串即可。
+  if [ -e /proc/1/environ ] && grep -aq 'container=lxc' /proc/1/environ 2>/dev/null; then
+    return 0
+  fi
+  local running_kernel installed_kernels
+  running_kernel="$(uname -r)"
+  if [ -d "/lib/modules/$running_kernel" ]; then
+    return 0
+  fi
+  # busybox find 不支持 -printf；用 sed 取目录名，兼容 Alpine 默认工具集。
+  installed_kernels="$(find /lib/modules -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sed 's#.*/##' | grep -v '^$' | tr '\n' ' ')"
+  if [ -z "$installed_kernels" ]; then
+    return 0
+  fi
+  echo
+  echo "⚠️  检测到系统内核已升级，但尚未重启！" >&2
+  echo "    当前运行内核: $running_kernel" >&2
+  echo "    已安装内核:   $installed_kernels" >&2
+  echo "    apk 升级内核后，旧内核的模块目录已被清理。现在运行的旧内核没有" >&2
+  echo "    nf_tables 等模块，sing-box-tproxy 将无法启动（nft 报" >&2
+  echo "    \"Protocol not supported\"）。" >&2
+  echo "    请先执行 reboot 重启加载新内核，然后再重新运行本安装脚本。" >&2
+  echo
+}
+
 state_get() {
   local key="$1"
   [ -r "$INSTALL_STATE_FILE" ] || return 0
@@ -739,6 +771,7 @@ main() {
   esac
   need_root
   require_alpine
+  check_kernel_reboot_needed
   record_preinstall_state
   choose_sing_box_runtime
   install_packages
