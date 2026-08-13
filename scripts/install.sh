@@ -404,9 +404,10 @@ install_cron_jobs() {
   rc-service crond restart >/dev/null 2>&1 || rc-service crond start >/dev/null 2>&1 || true
 }
 
-setup_ntp_china() {
+setup_timezone_cn() {
   # 时区固定为北京时间(Asia/Shanghai)：网关面向国内用户，日志时间戳与
   # 用户本地时间一致才便于排障；tzdata 缺失时不阻断安装，仅告警。
+  # 这只改时区显示，不碰 NTP 源与 ntpd 服务。
   if [ -f /usr/share/zoneinfo/Asia/Shanghai ]; then
     ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
     echo "Asia/Shanghai" > /etc/timezone
@@ -419,25 +420,26 @@ setup_ntp_china() {
       echo "WARN: tzdata 不可用，时区保持系统默认" >&2
     fi
   fi
-  # NTP 上游用国内源：境内访问默认的 pool.ntp.org 常有丢包/高延迟，
-  # 而 AEAD-2022 要求时钟精度在 30 秒内，源不稳会让节点间歇性失效。
-  # 多写几个源，busybox ntpd 会自行择优。
-  if [ ! -f /etc/conf.d/ntpd ] || ! grep -q "aliyun" /etc/conf.d/ntpd 2>/dev/null; then
-    cat > /etc/conf.d/ntpd <<'NTPCONF'
-# busybox ntpd 配置（sing-box 网关，国内 NTP 源）
-NTPD_OPTS="-N -p ntp.aliyun.com -p ntp1.aliyun.com -p time1.cloud.tencent.com -p cn.pool.ntp.org"
-NTPCONF
-  fi
 }
 
+# ⚠️ 安装器刻意完全不介入 NTP（2026-08-13 决策，原实现已整体撤除）
+#
+# 曾经写过「写 /etc/conf.d/ntpd 换国内源 + rc-update add ntpd」的逻辑，全部撤掉：
+#  1. NTP 是系统时间子系统，不属于本网关的职责范围。改用户的 ntpd 配置、
+#     替他决定开机自启，会与用户自己的 chrony/openntpd 选择打架。
+#  2. 同样的逻辑在 UD 仓要适配 timesyncd/chrony × 各发行版 conf 布局，
+#     维护面持续膨胀且每个新版本都可能再变（Ubuntu 26.04 已改成 ucf 生成）。
+#  3. 收益（国内源快一点）远小于误改用户系统配置的风险。
+# 时钟准确性对 Shadowsocks AEAD-2022 是硬依赖（两端差 >30 秒直接拒连，表现为
+# 节点「能连但 0 B/s」），但这属于运行环境前提，改由 Rule UI 在节点表单处提示
+# 用户自行保证，安装器不代劳。
+
 enable_services() {
-  # NTP 时钟同步：Alpine 自带 busybox ntpd 但默认不启用。
-  # Shadowsocks AEAD-2022(2022-blake3-*) 有防重放保护，客户端与服务端时间差
-  # 超过 30 秒会被服务端直接拒连(日志: invalid timestamp)，表现为节点"能连但 0 B/s"。
-  # 网关时钟一旦漂移，所有 2022 加密节点集体失效，故安装时必须拉起 ntpd 并设开机自启。
-  setup_ntp_china
-  rc-update add ntpd default >/dev/null 2>&1 || true
-  rc-service ntpd start >/dev/null 2>&1 || true
+  # 时区固定北京时间，便于日志排障。
+  # ⚠️ 注意这里刻意不动 ntpd 与 NTP 上游源（理由见上方大段注释）：
+  # Shadowsocks AEAD-2022 要求两端时钟差 <30 秒，属运行环境前提，
+  # 由 Rule UI 节点表单提示用户自行保证，安装器不介入系统时间子系统。
+  setup_timezone_cn
   rc-update add sing-box-tproxy default >/dev/null 2>&1 || true
   rc-update add sing-box default >/dev/null 2>&1 || true
   rc-update add singbox-rule-ui default >/dev/null 2>&1 || true

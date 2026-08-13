@@ -220,10 +220,13 @@ main() {
     /etc/sysctl.d/99-sing-box-tproxy.conf \
     /etc/sysctl.d/98-sing-box-performance.conf \
     /etc/local.d/singbox-qdisc.start
-  # ntpd 的国内 NTP 源配置由安装器写入；卸载时移除并重启，让 ntpd 回到
-  # busybox 默认源（不停用 ntpd 本身，避免卸载后系统时钟无人校准）。
-  rm -f /etc/conf.d/ntpd
-  rc-service ntpd restart >/dev/null 2>&1 || true
+  # 迁移清理：安装器已不再改 NTP（2026-08-13 起完全不介入系统时间子系统），
+  # 但装过旧版本的机器上残留着我们写的 /etc/conf.d/ntpd（含 aliyun 源）。
+  # ⚠️ 必须先确认是我们写的再删：用户可能有自己的 ntpd 配置，无条件 rm 会误删。
+  # 不重启 ntpd：既然我们不再管它，就不该在卸载时打断它的同步状态。
+  if [ -f /etc/conf.d/ntpd ] && grep -q "sing-box 网关" /etc/conf.d/ntpd 2>/dev/null; then
+    rm -f /etc/conf.d/ntpd
+  fi
   # MTU 持久化脚本名带网卡名(set-mtu-<iface>.start)，用通配清理，避免残留脚本
   # 在网卡改名/换网后把新环境 MTU 设错。
   rm -f /etc/local.d/set-mtu-*.start
