@@ -94,6 +94,6 @@ sh -n \
 
 | 仓库 | 本地路径 | 说明 |
 |------|---------|------|
-| `hanigege/singbox-ui-alpine` | `~/codex/sb-alpine` | 当前唯一维护仓库（sb-alpine）。Alpine OpenRC 环境，sing-box reF1nd 网关 + Rule UI。生产部署在 10.20.20.6 和 10.20.20.16。 |
+| `hanigege/singbox-ui-alpine` | `~/codex/sb-alpine` | 当前唯一维护仓库（sb-alpine）。Alpine OpenRC 环境，官方 sing-box 网关 + Rule UI。生产部署在 10.20.20.6 和 10.20.20.16。 |
 
 `sing-box1.14x-gateway-ui` 与 `sing-box1.13.13-gateway-ui` 两个仓库已于 2026-08 删除，不再维护，前端改动无需再同步。
