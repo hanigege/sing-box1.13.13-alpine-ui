@@ -54,7 +54,10 @@ check_kernel_reboot_needed() {
     return 0
   fi
   # busybox find 不支持 -printf；用 sed 取目录名，兼容 Alpine 默认工具集。
-  installed_kernels="$(find /lib/modules -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sed 's#.*/##' | grep -v '^$' | tr '\n' ' ')"
+  # || true 必带：/lib/modules 不存在或为空时（容器/最小化安装），
+  # grep -v '^$' 空输入返回 1，pipefail+set -e 会把整个安装器静默杀死
+  # （2026-08-30 Docker 容器一键安装实测：零输出 exit 1）。
+  installed_kernels="$(find /lib/modules -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sed 's#.*/##' | grep -v '^$' | tr '\n' ' ' || true)"
   if [ -z "$installed_kernels" ]; then
     return 0
   fi
